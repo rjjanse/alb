@@ -262,6 +262,7 @@ validate <- function(.data,                                     # Data
                      # Calibration plot details
                      unit = "probability",                      # Unit of prediction for axes of plot
                      annotation = c("", 0, 1),                  # Annotation to add to plot as c("annotation", x, y)
+                     smoother = TRUE,                           # Should a smoother be added? This also determines whether pseudo-obs are calculated in FG models
                      smooth_colour = "darkred",                 # Colour of smoother
                      histogram_label = NULL                     # Location of event / no-event label in probabilities histogram
 ){
@@ -334,8 +335,8 @@ validate <- function(.data,                                     # Data
                 select(dec, out_prop, pred_prop, nmax)
         }
         
-        # Calculate pseudo-observations
-        if(model == "fine-gray"){
+        # Calculate pseudo-observations if smoother
+        if(model == "fine-gray" && smoother){
             # Create empty id column
             dat <- mutate(dat, ids = 1:nrow(dat))
             
@@ -382,7 +383,7 @@ validate <- function(.data,                                     # Data
         }
         
         # Set y variable based on model
-        if(model == "fine-gray") dat <- mutate(dat, y = aj_o) else dat <- mutate(dat, y = obs)
+        if(model == "fine-gray" && smoother) dat <- mutate(dat, y = aj_o) else dat <- mutate(dat, y = obs_ncr)
         
         ## Define characteristics of the plot
         # Upper limits of axes
@@ -408,8 +409,10 @@ validate <- function(.data,                                     # Data
         plot_cal <- ggplot(dat, aes(x = prd, y = y)) +
             # Geometries
             geom_abline(colour = "black", linewidth = 2, alpha = 0.33) +
-            geom_point(alpha = 0.25) +
-            geom_smooth(colour = smooth_colour, fill = smooth_colour, method = "loess", formula = y ~ x)
+            geom_point(alpha = 0.25)
+
+        # If smoother, add smoother
+        if(smoother) plot_cal <- plot_cal + geom_smooth(colour = smooth_colour, fill = smooth_colour, method = "loess", formula = y ~ x)
         
         # If AFT model, overwrite base scatter plot to add colouring for different statuses
         if(model == "aft"){
