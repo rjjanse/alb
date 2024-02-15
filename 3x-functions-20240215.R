@@ -258,6 +258,7 @@ validate <- function(.data,                                     # Data
                      print_stratified = FALSE,                  # Print stratified C-statistics (only relevant for survival model)
                      plot = TRUE,                               # Should a calibration plot be made
                      deciles = TRUE,                            # Should deciles be added in calibration plot
+                     bootstraps = 500,                          # Number of bootstraps for C-statistic
                      # Calibration plot details
                      unit = "probability",                      # Unit of prediction for axes of plot
                      annotation = c("", 0, 1),                  # Annotation to add to plot as c("annotation", x, y)
@@ -509,7 +510,7 @@ validate <- function(.data,                                     # Data
         c <- cstat(dat, model)
         
         # Calculate confidence interval around C statistic
-        ci <- quantile(do.call("c", lapply(1:500, \(x){
+        ci <- quantile(do.call("c", lapply(1:bootstraps, \(x){
             # Set seed
             set.seed(x)
             
