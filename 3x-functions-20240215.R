@@ -20,15 +20,15 @@ quiet <- function(x){
 } 
 
 # Function for linearity check
-lin_check <- function(var, annotation, model){
+lin_check <- function(df, var, event, annotation, model){
     # Get event
-    if(is.factor(dat_dev[["event"]])) ev <- as.numeric(filter(dat_dev, .imp == 1)[["event"]]) - 1 
+    if(is.factor(df[[event]])) ev <- as.numeric(filter(dat_dev, .imp == 1)[[event]]) - 1 
     else ev <- as.numeric(filter(dat_dev, .imp == 1)[["event"]])
     
     # Fine-Gray model
     if(model == "fine-gray"){
         # Get data
-        dat_plot <- do.call("cbind", quiet(rcspline.plot(x = filter(dat_dev, .imp == 1)[[var]], y = filter(dat_dev, .imp == 1)[["tte"]], noprint = TRUE,
+        dat_plot <- do.call("cbind", quiet(rcspline.plot(x = filter(df, .imp == 1)[[var]], y = filter(df, .imp == 1)[["tte"]], noprint = TRUE,
                                                          event = ev, model = "cox", statloc = "none"))) %>%
             # Change to data frame
             as.data.frame() 
@@ -37,7 +37,7 @@ lin_check <- function(var, annotation, model){
     # Cox and AFT model
     if(model %in% c("cox", "aft")){
         # Get data
-        dat_plot <- do.call("cbind", quiet(rcspline.plot(x = filter(dat_dev, .imp == 1)[[var]], y = filter(dat_dev, .imp == 1)[["tte"]], noprint = TRUE,
+        dat_plot <- do.call("cbind", quiet(rcspline.plot(x = filter(df, .imp == 1)[[var]], y = filter(df, .imp == 1)[["tte"]], noprint = TRUE,
                                                          event = ev == 1, model = "cox", statloc = "none"))) %>%
             # Change to data frame
             as.data.frame() 
@@ -46,7 +46,7 @@ lin_check <- function(var, annotation, model){
     # Logistic model
     if(model == "logistic"){
         # Get data
-        dat_plot <- do.call("cbind", quiet(rcspline.plot(x = filter(dat_dev, .imp == 1)[[var]], y = ev == 1, 
+        dat_plot <- do.call("cbind", quiet(rcspline.plot(x = filter(df, .imp == 1)[[var]], y = ev == 1, 
                                                          noprint = TRUE, model = "logistic", statloc = "none"))) %>%
             # Change to data frame
             as.data.frame() 
