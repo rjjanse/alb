@@ -20,15 +20,15 @@ quiet <- function(x){
 } 
 
 # Function for linearity check
-lin_check <- function(df, var, event, annotation, model){
+lin_check <- function(df, var, event, time, annotation, model, xlab){
     # Get event
-    if(is.factor(df[[event]])) ev <- as.numeric(filter(dat_dev, .imp == 1)[[event]]) - 1 
-    else ev <- as.numeric(filter(dat_dev, .imp == 1)[["event"]])
+    if(is.factor(df[[event]])) ev <- as.numeric(filter(df, .imp == 1)[[event]]) - 1 
+    else ev <- as.numeric(filter(df, .imp == 1)[[event]])
     
     # Fine-Gray model
     if(model == "fine-gray"){
         # Get data
-        dat_plot <- do.call("cbind", quiet(rcspline.plot(x = filter(df, .imp == 1)[[var]], y = filter(df, .imp == 1)[["tte"]], noprint = TRUE,
+        dat_plot <- do.call("cbind", quiet(rcspline.plot(x = filter(df, .imp == 1)[[var]], y = filter(df, .imp == 1)[[time]], noprint = TRUE,
                                                          event = ev, model = "cox", statloc = "none"))) %>%
             # Change to data frame
             as.data.frame() 
@@ -37,7 +37,7 @@ lin_check <- function(df, var, event, annotation, model){
     # Cox and AFT model
     if(model %in% c("cox", "aft")){
         # Get data
-        dat_plot <- do.call("cbind", quiet(rcspline.plot(x = filter(df, .imp == 1)[[var]], y = filter(df, .imp == 1)[["tte"]], noprint = TRUE,
+        dat_plot <- do.call("cbind", quiet(rcspline.plot(x = filter(df, .imp == 1)[[var]], y = filter(df, .imp == 1)[[time]], noprint = TRUE,
                                                          event = ev == 1, model = "cox", statloc = "none"))) %>%
             # Change to data frame
             as.data.frame() 
@@ -53,8 +53,7 @@ lin_check <- function(df, var, event, annotation, model){
     }
     
     # Get x-axis label
-    xlabel <- ifelse(var == "age", "Age (years)", ifelse(var == "bmi", expression("BMI (kg/m" ^ 2 * ")"), 
-                                                         expression("eGFR (mL/min/1.73m" ^ 2 * ")")))
+    xlabel <- xlab
     
     # Get plot
     p <- ggplot(dat_plot, aes(x = x, y = V3)) +
@@ -556,21 +555,24 @@ model_inf <- function(){
         factor_info <- names(model_vars[grepl("factor\\(", names(model_vars))]) %>%
             # Change into data frame
             as.data.frame() %>%
+            # Rename first column
+            rename(input = 1) %>%
+            # Get variable
+            mutate(var = str_replace_all(input, "(as.)+factor\\(|\\)\\d*", "")) %>%
             # Arrange for grouping
-            arrange(.) %>%
+            arrange(var) %>%
             # Group per variable
-            group_by(.) %>%
+            group_by(var) %>%
             # Create new columns
-            mutate(# Variable
-                var = str_replace_all(., "(as.)+factor\\(|\\)\\d*", ""),
+            mutate(
                 # Levels
-                levels = as.numeric(str_extract(., "(?<=\\))\\d+")),
+                levels = as.numeric(str_extract(input, "(?<=\\))\\d+")),
                 # Rows per group
                 rows = max(row_number())) %>%
             # Ungroup again
             ungroup()
         
-        # Add information to spline_info
+        # Add information to factor_info
         factor_info <- mutate(factor_info, 
                               # Coefficient per level
                               coef = as.numeric(as.vector(model_vars[grepl("factor", names(model_vars))])),
@@ -595,39 +597,46 @@ model_inf <- function(){
         spline_info <- names(model_vars[grepl("knot", names(model_vars))]) %>%
             # Change into data frame
             as.data.frame() %>%
+            # Rename first column
+            rename(input = 1) %>%
+            # Get variable
+            mutate(var = str_extract(input, "(?<=.{1,5}\\().*(?=,.?knots=)")) %>%
             # Arrange for grouping
-            arrange(.) %>%
+            arrange(var) %>%
             # Group per variable
-            group_by(.) %>%
+            group_by(var) %>%
             # Create new columns
-            mutate(# Variable
-                var = str_replace_all(., ".*(?<!,knot=c)\\(|\\)\\d|,knot.*", ""),
+            mutate(
                 # Knots
-                knots = paste0("-Inf,", str_extract(., "(?<=[\\(|=])\\d+(,\\d*)*"), ",Inf"),
+                knots = paste0("-Inf,", str_extract(input, "(?<=[\\(|=])\\d+(,\\d*)*"), ",Inf"),
                 # Levels
-                levels = as.numeric(str_extract(., "(?<=\\))\\d+")),
-                # Rows per group
-                rows = max(row_number())) %>%
+                levels = as.numeric(str_extract(input, "(?<=\\))\\d+")),
+                # Row number
+                row = row_number()) %>%
             # Ungroup again
             ungroup()
         
         # Matrix of spline levels
         spline_levels <- str_split(spline_info[["knots"]], ",", simplify = TRUE)
         
+        # Get vector with lower levels
+        lower_levels <- as.numeric(lapply(1:nrow(spline_info), \(x) spline_levels[x, spline_info[[x, "levels"]]]))
+        
+        # Get vector with upper levels
+        upper_levels <- as.numeric(lapply(1:nrow(spline_info), \(x) spline_levels[x, spline_info[[x, "levels"]] + 1]))
+        
         # Add information to spline_info
         spline_info <- mutate(spline_info, 
                               # Lower level of section
-                              lower_level = as.numeric(spline_levels[rows[[1]], levels]),
+                              lower_level = lower_levels,
                               # Upper level of section
-                              upper_level = as.numeric(spline_levels[rows[[1]], levels + 1]),
+                              upper_level = upper_levels,
                               # Coefficient per level
                               coef = as.numeric(as.vector(model_vars[grepl("knot", names(model_vars))])),
                               # Add type
                               type = "spline") %>%
             # Keep only relevant variables
-            select(var, lower_level, upper_level, coef, type) %>%
-            # Create empty levels variable
-            mutate(levels = NA)
+            select(var, lower_level, upper_level, coef, type, levels) 
     }
     
     # Else, create empty data
@@ -635,7 +644,8 @@ model_inf <- function(){
                                coef = as.numeric(),
                                lower_level = as.numeric(), 
                                upper_level = as.numeric(),
-                               type = as.character())
+                               type = as.character(),
+                               levels = NA)
     
     # Create data for all variables in the model, adding onto the splined variables
     model_info <- tibble(var = names(model_vars[!grepl("knot|factor\\(", names(model_vars))][-1]),
@@ -653,8 +663,32 @@ model_inf <- function(){
     return(model_info)
 }
 
+# Function for spline transformation
+nspline_trans <- function(variable, value){
+    # Get model info
+    model_info <- model_inf()
+    
+    # Get knots
+    knots <- c(filter(model_info, var == variable)[["lower_level"]], 
+               filter(model_info, var == variable)[["upper_level"]]) %>%
+        # Keep only unique
+        unique() %>%
+        # Keep only not infinites
+        extract(!is.infinite(.))
+    
+    # Get B-spline matrix
+    mat <- as.data.frame(ns(value, knots = knots))
+    
+    # Return matrix
+    return(mat)
+}
+    
+
 # Create function to calculate sample linear predictor
 lpsamp <- function(df){
+    # Store data
+    dat_tmp <- df
+    
     # Get model information
     model_info <- model_inf()
     
@@ -662,7 +696,7 @@ lpsamp <- function(df){
     lp_fracs <- bind_cols(lapply(1:nrow(model_info), \(x){
         # Get variable of interest
         var <- model_info[x, "var"][[1]]
-        
+
         # Get coefficient of interest
         coef <- model_info[x, "coef"][[1]]
         
@@ -678,11 +712,23 @@ lpsamp <- function(df){
         # Get level of variable
         level <- model_info[x, "levels"][[1]]
         
+        # Change var if spline
+        if(type == "spline") {
+            # Update var
+            var_new <- paste0(var, level)
+            
+            # Add new var in data
+            dat_tmp[[var_new]] <- nspline_trans(var, dat_tmp[[var]])[, level]
+            
+            # Overwrite var
+            var <- var_new
+        }
+        
         # Determine whether variable is logical
-        if(length(table(df[[var]])) == 2 | type == "factor") logic <- TRUE else logic <- FALSE
+        if(length(table(dat_tmp[[var]])) == 2 | type == "factor") logic <- TRUE else logic <- FALSE
         
         # Calculate fraction of LP
-        lp_frac <- df %>%
+        lp_frac <- dat_tmp %>%
             # Select relevant variables
             select(.imp, all_of(var)) %>%
             # Rename varying 'var' to value
@@ -693,8 +739,7 @@ lpsamp <- function(df){
             group_by(.imp) %>%
             # Calculate new variables
             mutate(# Set value based on conditions
-                value = case_when(type == "as_is" ~ value,                                                # No changes for as_is variables
-                                  type == "spline" & value >= lower_level & value < upper_level ~ value,  # No changes if value is in spline section
+                value = case_when(type %in% c("as_is", "spline") ~ value,                                 # No changes for as_is and spline variables
                                   type == "factor" & as.character(value) == as.character(level) ~ 1,      # Factor to 1 if same level (this represents dummy variable)
                                   type == "factor" & as.character(value) != as.character(level) ~ 0,      # Factor to 0 if not the same level
                                   .default = NA),                                                         # Otherwise, set value to missing
@@ -723,6 +768,9 @@ lpsamp <- function(df){
 
 # Create function to get predicted risks
 pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NULL){
+    # Store data
+    dat_tmp <- df
+    
     # Get model information
     model_info <- model_inf()
     
@@ -746,8 +794,20 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NUL
         # Get level of variable
         level <- model_info[x, "levels"][[1]]
         
+        # Change var if spline
+        if(type == "spline") {
+            # Update var
+            var_new <- paste0(var, level)
+            
+            # Add new var in data
+            dat_tmp[[var_new]] <- nspline_trans(var, dat_tmp[[var]])[, level]
+            
+            # Overwrite var
+            var <- var_new
+        }
+        
         # Calculate fraction of LP
-        lp_frac <- df %>%
+        lp_frac <- dat_tmp %>%
             # Select relevant variables
             select(studynr, .imp, all_of(var)) %>%
             # Rename varying 'var' to value
@@ -757,8 +817,7 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NUL
             # Group per imputation
             group_by(studynr, .imp) %>%
             # Calculate fraction
-            mutate(lp_frac = case_when(type == "as_is" ~ value * coef,                                                # As_is variables
-                                       type == "spline" & value >= lower_level & value < upper_level ~ value * coef,  # Splines
+            mutate(lp_frac = case_when(type %in% c("as_is", "spline") ~ value * coef,                                 # as_is & spline
                                        type == "factor" & as.character(value) == as.character(level) ~ coef,          # Factors
                                        .default = 0)) %>%  
             # Ungroup again
