@@ -115,7 +115,7 @@ ph_plot <- function(var, ylabel, annotation){
 }
 
 # Function to create model per imputation
-develop <- function(df, imp, formula, model, aft_dist){
+develop <- function(df, imp, formula, model, horizon, aft_dist){
     # Data
     dat_mod_tmp <- filter(df, .imp == imp) 
     
@@ -147,8 +147,8 @@ develop <- function(df, imp, formula, model, aft_dist){
         bh <- basehaz(fit) %>%
             # Change to data frame
             as.data.frame() %>%
-            # Remove everything after a year
-            filter(time <= 365.25) %>%
+            # Remove everything after prediction horizon
+            filter(time <= horizon) %>%
             # Keep only last observation
             slice_tail(n = 1L) %>%
             # Keep baseline hazard
@@ -181,9 +181,9 @@ develop <- function(df, imp, formula, model, aft_dist){
 }
 
 # Function for model development
-dev <- function(df, formula, model, aft_dist = NULL){
+dev <- function(df, formula, model, horizon, aft_dist = NULL){
     # Fit model for each imputation and add together the final models
-    mod <- do.call("rbind", lapply(unique(df[[".imp"]]), \(x) develop(df, x, formula, model, aft_dist)))
+    mod <- do.call("rbind", lapply(unique(df[[".imp"]]), \(x) develop(df, x, formula, model, horizon, aft_dist)))
     
     # Get final model fit by taking means of each model
     model_vars <- summary(mod) %>% 
@@ -664,7 +664,7 @@ model_inf <- function(){
 }
 
 # Function for spline transformation
-nspline_trans <- function(variable, value){
+nspline_trans <- function(variable, value, mean = FALSE){
     # Get model info
     model_info <- model_inf()
     
@@ -832,10 +832,10 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NUL
     })) 
     
     # Get observed event
-    obs = arrange(df, studynr, .imp)[[deparse(substitute(observed))]]
+    obs <- arrange(df, studynr, .imp)[[deparse(substitute(observed))]]
     
     # Get time (for survival models)
-    tim = arrange(df, studynr, .imp)[[deparse(substitute(time))]]
+    tim <- arrange(df, studynr, .imp)[[deparse(substitute(time))]]
     
     # Get final linear predictors
     dat_tmp <- df %>%
@@ -863,7 +863,7 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NUL
             mutate(# Centered linear predictors
                 lp = lp - lpsamp,
                 # Predicted probability
-                prob = 1 - exp(-as.numeric(model_vars[["bh"]])) ^ exp(lp)) %>%
+                prob = 1 - exp(- as.numeric(model_vars[["bh"]])) ^ exp(lp)) %>%
             # Ungroup again
             ungroup()
     }
