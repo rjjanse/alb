@@ -206,6 +206,27 @@ dev <- function(df, formula, model, horizon, aft_dist = NULL){
         # Keep only second row
         filter(row_number() == 2) 
     
+    # Get spline information if splines were used
+    if(str_detect(formula, "ns\\(")){
+        # Get all variables for which splines were used
+        model_spline_info <- tibble(variables = str_extract_all(formula, "(?<=ns\\().*?(?=,)")[[1]]) 
+        
+        # Empty boundaries
+        lower_boundaries <- c(); upper_boundaries <- c()
+        
+        # Get boundaries
+        for(i in 1:nrow(model_spline_info)){
+            # Lower boundary
+            lower_boundaries[i] <- min(df[[model_spline_info[[i, 1]]]])
+            
+            # Upper boundary
+            upper_boundaries[i] <- max(df[[model_spline_info[[i, 1]]]])
+        }
+        
+        # Add information to data and put data in global environment
+        model_spline_info <<- mutate(model_spline_info, lower_boundary = lower_boundaries, upper_boundary = upper_boundaries)
+    }
+    
     # Return model vars
     return(model_vars)
 }
@@ -535,16 +556,22 @@ validate <- function(.data,                                     # Data
         c <- paste0(format(round(c, 2), nsmall = 2), " (",
                     format(round(ci[[1]], 2), nsmall = 2), "-",
                     format(round(ci[[2]], 2), nsmall = 2), ")")
-        
-        # Output statistics
-        print.table(tibble("Calibration-in-the-large" = citl, "Calibration slope" = cslope, "C statistic" = c))
     }
     
-    # Output statistics
-    if(model %in% c("linear", "poisson")) print.table(tibble("Calibration-in-the-large" = citl, "Calibration slope" = cslope))
+    # List with output
+    output <- list(
+        # Calibration statistics
+        tibble("Calibration-in-the-large" = citl, "Calibration slope" = cslope)
+    )
     
-    # Return plot
-    if(plot) return(plot_cal)
+    # If C-statistic was calculated, add it
+    if(!(model %in% c("linear", "poisson"))) output[[1]] <- mutate(output[[1]], "C statistic" = c)
+    
+    # If plot was desired, add it
+    if(plot) output[[2]] <- plot_cal
+    
+    # Return final result
+    return(output)
 }
 
 # Create function to get model information
@@ -559,8 +586,6 @@ model_inf <- function(){
             rename(input = 1) %>%
             # Get variable
             mutate(var = str_replace_all(input, "(as.)+factor\\(|\\)\\d*", "")) %>%
-            # Arrange for grouping
-            arrange(var) %>%
             # Group per variable
             group_by(var) %>%
             # Create new columns
@@ -591,24 +616,22 @@ model_inf <- function(){
                                upper_level = as.numeric(),
                                type = as.character())
     
-    # Get spline info if splines were used
+    # Get spline info if B-spline matrix basis splines were used
     if(length(names(model_vars[grepl("knot", names(model_vars))])) > 0){
         # Get information on splined variables
-        spline_info <- names(model_vars[grepl("knot", names(model_vars))]) %>%
+        bspline <- names(model_vars[grepl("knot", names(model_vars))]) %>%
             # Change into data frame
             as.data.frame() %>%
             # Rename first column
             rename(input = 1) %>%
             # Get variable
             mutate(var = str_extract(input, "(?<=.{1,5}\\().*(?=,.?knots=)")) %>%
-            # Arrange for grouping
-            arrange(var) %>%
             # Group per variable
             group_by(var) %>%
             # Create new columns
             mutate(
                 # Knots
-                knots = paste0("-Inf,", str_extract(input, "(?<=[\\(|=])\\d+(,\\d*)*"), ",Inf"),
+                knots = paste0("-Inf,", str_extract(input, "(?<=[\\(|=|,])[\\d.,]+(?=\\))"), ",Inf"),
                 # Levels
                 levels = as.numeric(str_extract(input, "(?<=\\))\\d+")),
                 # Row number
@@ -617,35 +640,35 @@ model_inf <- function(){
             ungroup()
         
         # Matrix of spline levels
-        spline_levels <- str_split(spline_info[["knots"]], ",", simplify = TRUE)
+        spline_levels <- str_split(bspline[["knots"]], ",", simplify = TRUE)
         
         # Get vector with lower levels
-        lower_levels <- as.numeric(lapply(1:nrow(spline_info), \(x) spline_levels[x, spline_info[[x, "levels"]]]))
+        lower_levels <- as.numeric(lapply(1:nrow(bspline), \(x) spline_levels[x, bspline[[x, "levels"]]]))
         
         # Get vector with upper levels
-        upper_levels <- as.numeric(lapply(1:nrow(spline_info), \(x) spline_levels[x, spline_info[[x, "levels"]] + 1]))
+        upper_levels <- as.numeric(lapply(1:nrow(bspline), \(x) spline_levels[x, bspline[[x, "levels"]] + 1]))
         
         # Add information to spline_info
-        spline_info <- mutate(spline_info, 
-                              # Lower level of section
-                              lower_level = lower_levels,
-                              # Upper level of section
-                              upper_level = upper_levels,
-                              # Coefficient per level
-                              coef = as.numeric(as.vector(model_vars[grepl("knot", names(model_vars))])),
-                              # Add type
-                              type = "spline") %>%
+        transspline_info <- mutate(bspline, 
+                                   # Lower level of section
+                                   lower_level = lower_levels,
+                                   # Upper level of section
+                                   upper_level = upper_levels,
+                                   # Coefficient per level
+                                   coef = as.numeric(as.vector(model_vars[grepl("knot", names(model_vars))])),
+                                   # Add type
+                                   type = "bspline") %>%
             # Keep only relevant variables
             select(var, lower_level, upper_level, coef, type, levels) 
     }
     
     # Else, create empty data
-    else spline_info <- tibble(var = as.character(),
-                               coef = as.numeric(),
-                               lower_level = as.numeric(), 
-                               upper_level = as.numeric(),
-                               type = as.character(),
-                               levels = NA)
+    else transspline_info <- tibble(var = as.character(),
+                                    coef = as.numeric(),
+                                    lower_level = as.numeric(), 
+                                    upper_level = as.numeric(),
+                                    type = as.character(),
+                                    levels = NA)
     
     # Create data for all variables in the model, adding onto the splined variables
     model_info <- tibble(var = names(model_vars[!grepl("knot|factor\\(", names(model_vars))][-1]),
@@ -657,14 +680,14 @@ model_inf <- function(){
         # Clean up names
         mutate(var = str_replace_all(var, ".*(?<!,knot=c)\\(|\\)\\d", "")) %>%
         # Add splined and factor variables
-        bind_rows(spline_info, factor_info)
+        bind_rows(transspline_info, factor_info)
     
     # Return data
     return(model_info)
 }
 
-# Function for spline transformation
-nspline_trans <- function(variable, value, mean = FALSE){
+# Function for B-spline basis matrix transformation
+bspline_trans <- function(variable, value, df = 3){
     # Get model info
     model_info <- model_inf()
     
@@ -674,10 +697,16 @@ nspline_trans <- function(variable, value, mean = FALSE){
         # Keep only unique
         unique() %>%
         # Keep only not infinites
-        extract(!is.infinite(.))
+        `[`(!is.infinite(.))
+    
+    # Lower boundary
+    lb <- filter(model_spline_info, variables == variable)[["lower_boundary"]]
+    
+    # Upper boundary
+    ub <- filter(model_spline_info, variables == variable)[["upper_boundary"]]
     
     # Get B-spline matrix
-    mat <- as.data.frame(ns(value, knots = knots))
+    mat <- as.data.frame(ns(value, knots = knots, df = df, Boundary.knots = c(lb, ub)))
     
     # Return matrix
     return(mat)
@@ -712,13 +741,13 @@ lpsamp <- function(df){
         # Get level of variable
         level <- model_info[x, "levels"][[1]]
         
-        # Change var if spline
-        if(type == "spline") {
+        # Change var if transforming spline
+        if(type == "bspline") {
             # Update var
             var_new <- paste0(var, level)
             
             # Add new var in data
-            dat_tmp[[var_new]] <- nspline_trans(var, dat_tmp[[var]])[, level]
+            dat_tmp[[var_new]] <- bspline_trans(var, dat_tmp[[var]])[, level]
             
             # Overwrite var
             var <- var_new
@@ -739,14 +768,14 @@ lpsamp <- function(df){
             group_by(.imp) %>%
             # Calculate new variables
             mutate(# Set value based on conditions
-                value = case_when(type %in% c("as_is", "spline") ~ value,                                 # No changes for as_is and spline variables
+                value = case_when(type %in% c("as_is", "bspline") ~ value,                                # No changes for as_is and spline variables
                                   type == "factor" & as.character(value) == as.character(level) ~ 1,      # Factor to 1 if same level (this represents dummy variable)
                                   type == "factor" & as.character(value) != as.character(level) ~ 0,      # Factor to 0 if not the same level
                                   .default = NA),                                                         # Otherwise, set value to missing
                 # Get mean of value
                 mean_value = mean(value, na.rm = TRUE),
-                # Round mean value if logical is true
-                mean_value = ifelse(logic, round(mean_value), mean_value),
+                # For factors, mean value is 0 (see details coxph)
+                mean_value = ifelse(logic, 0, mean_value),
                 # Multiply mean value with coefficient
                 lp = mean_value * coef) %>%
             # Keep one row per group
@@ -795,12 +824,12 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NUL
         level <- model_info[x, "levels"][[1]]
         
         # Change var if spline
-        if(type == "spline") {
+        if(type == "bspline") {
             # Update var
             var_new <- paste0(var, level)
             
             # Add new var in data
-            dat_tmp[[var_new]] <- nspline_trans(var, dat_tmp[[var]])[, level]
+            dat_tmp[[var_new]] <- bspline_trans(var, dat_tmp[[var]])[, level]
             
             # Overwrite var
             var <- var_new
@@ -817,7 +846,7 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NUL
             # Group per imputation
             group_by(studynr, .imp) %>%
             # Calculate fraction
-            mutate(lp_frac = case_when(type %in% c("as_is", "spline") ~ value * coef,                                 # as_is & spline
+            mutate(lp_frac = case_when(type %in% c("as_is", "bspline") ~ value * coef,                                # as_is & B-spline
                                        type == "factor" & as.character(value) == as.character(level) ~ coef,          # Factors
                                        .default = 0)) %>%  
             # Ungroup again
@@ -837,6 +866,9 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NUL
     # Get time (for survival models)
     tim <- arrange(df, studynr, .imp)[[deparse(substitute(time))]]
     
+    # Sum linear predictors
+    lp_sums <- do.call("c", lapply(1:nrow(lp_fracs), \(x) sum(t(lp_fracs[x, ]), na.rm = TRUE)))
+    
     # Get final linear predictors
     dat_tmp <- df %>%
         # Arrange on imputation
@@ -845,7 +877,7 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NUL
         select(studynr, .imp) %>%
         # Add variables of interest
         mutate(# Linear predictor
-            lp = rowSums(lp_fracs, na.rm = TRUE),
+            lp = lp_sums,
             # Observed event
             observed = obs,
             # Time (for survival models)
@@ -863,7 +895,7 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NUL
             mutate(# Centered linear predictors
                 lp = lp - lpsamp,
                 # Predicted probability
-                prob = 1 - exp(- as.numeric(model_vars[["bh"]])) ^ exp(lp)) %>%
+                prob = 1 - exp(-as.numeric(model_vars[["bh"]])) ^ exp(lp)) %>%
             # Ungroup again
             ungroup()
     }
