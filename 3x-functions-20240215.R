@@ -1168,6 +1168,18 @@ bh <- function(){
               class = "data.frame", row.names = c(NA, -1095L))
 }
 
+# Fitted model spline info
+si <- function(){
+    # Output from dput()
+    structure(list(variables = c("age", "egfr", "ucrea", "hba1c", 
+                                 "total_cholesterol", "ldl", "tc_hdl", "index_alb"), 
+                   lower_boundary = c(18.031485284052, 60.0001689340495, 0, 6.011, 
+                                      34.0837857142857, 5.9005, 1, 0), 
+                   upper_boundary = c(99.6112251882272, 185.770461135844, 994.3248, 
+                                      175, 458.2395, 314.0004, 36.7714285714286, 29.97)), 
+              row.names = c(NA, -8L), class = c("tbl_df", "tbl", "data.frame"))
+}
+
 # Fit individual survival curve
 survcurv <- function(# Model variables
                      female,
@@ -1207,6 +1219,7 @@ survcurv <- function(# Model variables
                      # Model info
                      mod = mv(),
                      bhs = bh(),
+                     msi = si(),
                      # Output
                      interactive = FALSE
                      ){
@@ -1214,6 +1227,12 @@ survcurv <- function(# Model variables
     columns <- c("female", "age", "education", "diab_months", "egfr", "ucrea", "hba1c", "total_cholesterol", "hdl", "ldl", "triglycerides",
                  "tc_hdl", "index_alb", "fibrillation", "chf", "cvd", "hypertension", "ihd", "neuropathy", "pvd", "retinopathy", "ulcer",                         
                  "aspirin", "bblockers", "glucose_lowering", "ccbs", "anticoagulants", "antihypertensives", "insulin", "mras", "rasi", "statins")
+    
+    # Get model vars
+    model_vars <- mod
+    
+    # Get spline info
+    model_spline_info <- msi
     
     # Create data frame based on variables if newdata is not entered
     if(is.null(newdata)){
