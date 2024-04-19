@@ -913,7 +913,7 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NUL
     })) 
     
     # Get observed event if given
-    if(!is.null(observed)) obs <- arrange(df, studynr, .imp)[[deparse(substitute(observed))]] else obs <- NA
+    if(deparse(substitute(observed)) != "NULL") obs <- arrange(df, studynr, .imp)[[deparse(substitute(observed))]] else obs <- NA
     
     # Get time (for survival models)
     tim <- arrange(df, studynr, .imp)[[deparse(substitute(time))]]
