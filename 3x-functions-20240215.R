@@ -1292,3 +1292,161 @@ survcurv <- function(# Model variables
     # If interactive, return interactive plot, else just plot
     if(interactive) return(ggplotly(plot)) else return(plot)
 }
+
+# Transition matrix
+tm <- function(){
+    structure(c(NA, NA, NA, NA, 1L, NA, NA, NA, 2L, 4L, NA, NA, 3L, 5L, 6L, NA), dim = c(4L, 4L), 
+              dimnames = list(from = c("Baseline", "Microalbuminuria", "Macroalbuminuria", "Death"), 
+                              to = c("Baseline", "Microalbuminuria", "Macroalbuminuria", "Death")))
+}
+
+# Data preparation for multi state prediction
+plot_mstate_prep <- function(# Model variables
+                             female,
+                             age,
+                             education,
+                             diabetes_months,
+                             egfr,
+                             urine_creatinine,
+                             hba1c,
+                             total_cholesterol,
+                             hdl,
+                             ldl,
+                             triglycerides,
+                             total_cholesterol_hdl_ratio,
+                             albumin,
+                             atrial_fibrillation,
+                             congestive_heart_failure,
+                             cerebrovascular_disease,
+                             hypertension,
+                             ischemic_heart_disease,
+                             neuropathy,
+                             peripheral_vascular_disease,
+                             retinopathy,
+                             ulcer,
+                             aspirin,
+                             beta_blockers,
+                             glucose_lowering_drugs,
+                             calcium_channel_blockers,
+                             anticoagulants,
+                             antihypertensives,
+                             insulin,
+                             mineralocorticoid_receptor_antagonists,
+                             ras_inhibitors,
+                             statins,
+                             # Data frame
+                             newdata = NULL,
+                             # Model info
+                             transition_matrix = tm(),
+                             # Output
+                             area = TRUE,
+                             interactive = FALSE
+){
+    # Define column names
+    columns <- c("female", "age", "education", "diab_months", "egfr", "ucrea", "hba1c", "total_cholesterol", "hdl", "ldl", "triglycerides",
+                 "tc_hdl", "index_alb", "fibrillation", "chf", "cvd", "hypertension", "ihd", "neuropathy", "pvd", "retinopathy", "ulcer",                         
+                 "aspirin", "bblockers", "glucose_lowering", "ccbs", "anticoagulants", "antihypertensives", "insulin", "mras", "rasi", "statins")
+    
+    # Create data frame based on variables if newdata is not entered
+    if(is.null(newdata)){
+        # Create data frame based on variables
+        data_new <- c(female, age, education, diabetes_months, egfr, urine_creatinine, hba1c, total_cholesterol, hdl, ldl, triglycerides,
+                      total_cholesterol_hdl_ratio, albumin, atrial_fibrillation, congestive_heart_failure, cerebrovascular_disease,
+                      hypertension, ischemic_heart_disease, neuropathy, peripheral_vascular_disease, retinopathy, ulcer, aspirin, beta_blockers,
+                      glucose_lowering_drugs, calcium_channel_blockers, anticoagulants, antihypertensives, insulin, mineralocorticoid_receptor_antagonists,
+                      ras_inhibitors, statins) %>%
+            # Change to matrix
+            as.matrix() %>%
+            # Transpose
+            t() %>%
+            # To data frame
+            as.data.frame() %>%
+            # Set column names
+            set_colnames(columns)
+    }
+    
+    # Else new data is the entered data frame
+    if(!is.null(newdata)){
+        # New data is data frame
+        data_new <- newdata %>%
+            # Select columns of interest; this returns error if not all necessary columns are present
+            select(all_of(columns))
+    }
+    
+    # Create new column names
+    new_cols <- sort(do.call("c", lapply(1:6, \(x) paste0(columns, ".", x))))
+    
+    # Duplicate new data for each transition (6)
+    dat_new <- rbind(data_new, data_new, data_new, data_new, data_new, data_new)
+    
+    # Add new (empty) columns
+    for(i in new_cols) dat_new[[i]] <- NA
+    
+    # Set new column values to covariate value if stratum, else 0
+    dat_new <- dat_new %>%
+        # Set column values
+        mutate(across(all_of(new_cols), \(x) x = ifelse(as.numeric(str_extract(cur_column(), "(?<=\\.)\\d")) == row_number(), 
+                                                        dat_new[[str_replace(cur_column(), "\\.\\d", "")]], 0))) %>%
+        # Add stratum and trans variables
+        mutate(strata = 1:6,
+               trans = 1:6) %>%
+        # Remove unnecessary variables
+        select(-all_of(columns))
+ 
+    # Load mstate fit
+    load(url("https://github.com/rjjanse/alb/raw/main/multistate/mstate_fit.Rdata"))
+    
+    # Load anonymous development data
+    load(url("https://github.com/rjjanse/alb/raw/main/multistate/dat_dev.Rdata"))
+    
+    # Empty data frame
+    dat_mstate_dev <- NULL
+    
+    # Prepare individual data
+    dat_fit <- msfit(mstate_object, newdata = dat_new, trans = transition_matrix)
+    
+    # Get individual probabilities (predt = 365 * 3, else code does not function)
+    probs <- probtrans(dat_fit, predt = 0, method = "aalen", direction = "forward", variance = FALSE)[[1]]
+    
+    # Create plotting data
+    dat_plot <- pivot_longer(probs, cols = pstate1:pstate4) %>%
+        # Change variables
+        mutate(# Change state names
+               state = case_match(name,
+                                  "pstate1" ~ "Event-free",
+                                  "pstate2" ~ "Microalbuminuria",
+                                  "pstate3" ~ "Macroalbuminuria",
+                                  "pstate4" ~ "Death"),
+               # State as factor
+               state = factor(state, levels = c("Death", "Macroalbuminuria", "Microalbuminuria", "Event-free")),
+               # Time to months
+               month = time / (365.25 / 12))
+    
+    # Create base plot
+    plot <- ggplot(dat_plot, aes(x = month, y = value, fill = state, colour = state)) 
+    
+    # If area, add area, else add line
+    if(area) plot <- plot + geom_area() else plot <- plot + geom_line()
+    
+    # Finish plot
+    plot <- plot +
+        # Scalings
+        scale_colour_manual(values = c("#BC4749", "#1D3354", "#467599", "#F2E8CF")) +
+        scale_fill_manual(values = c("#BC4749", "#1D3354", "#467599", "#F2E8CF")) +
+        scale_x_continuous(breaks = seq(0, 36, 3), name = "Time (months)", expand = c(0, 0)) +
+        scale_y_continuous(breaks = seq(0, 1, 0.1), labels = paste0(seq(0, 100, 10), "%"),
+                           name = "Probability", expand = c(0, 0)) +
+        # Transformations
+        coord_cartesian(xlim = c(0, 36), ylim = c(0, 1)) +
+        # Aesthetics
+        theme(panel.border = element_rect(colour = "black", fill = "transparent"),
+              legend.position = "bottom",
+              legend.title = element_blank(),
+              panel.background = element_rect(fill = "white"),
+              panel.grid.major = element_line(colour = "darkgrey"),
+              panel.grid.minor = element_blank())
+    
+    # If interactive, return interactive plot, else just plot
+    if(interactive) return(ggplotly(plot)) else return(plot)
+}
+    
