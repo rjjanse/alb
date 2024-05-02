@@ -1229,10 +1229,10 @@ survcurv <- function(# Model variables
                  "aspirin", "bblockers", "glucose_lowering", "ccbs", "anticoagulants", "antihypertensives", "insulin", "mras", "rasi", "statins")
     
     # Get model vars
-    model_vars <- mod
+    model_vars <<- mod
     
     # Get spline info
-    model_spline_info <- msi
+    model_spline_info <<- msi
     
     # Create data frame based on variables if newdata is not entered
     if(is.null(newdata)){
