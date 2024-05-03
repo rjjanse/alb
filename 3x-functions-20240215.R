@@ -1245,11 +1245,11 @@ survcurv <- function(# Model variables
             # Change to matrix
             as.matrix() %>%
             # Transpose
-            t() %>% as.data.frame() %>% print()
+            t() %>%
             # To data frame
-            # as.data.frame() %>%
-            # # Set column names
-            # set_colnames(columns)
+            as.data.frame() %>%
+            # Set column names
+            magrittr::set_colnames(columns)
     }
     
     # Else new data is the entered data frame
@@ -1362,7 +1362,7 @@ plot_mstate_prep <- function(# Model variables
             # To data frame
             as.data.frame() %>%
             # Set column names
-            set_colnames(columns)
+            magrittr::set_colnames(columns)
     }
     
     # Else new data is the entered data frame
