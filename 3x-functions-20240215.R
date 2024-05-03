@@ -1399,11 +1399,8 @@ plot_mstate_prep <- function(# Model variables
     # Load anonymous development data
     load(url("https://github.com/rjjanse/alb/raw/main/multistate/dat_dev.Rdata"))
     
-    # Empty data frame
-    dat_mstate_dev <- NULL
-    
     # Prepare individual data
-    dat_fit <- msfit(mstate_object, newdata = dat_new, trans = transition_matrix)
+    dat_fit <- msfit(mstate_fit, newdata = dat_new, trans = transition_matrix)
     
     # Get individual probabilities (predt = 365 * 3, else code does not function)
     probs <- probtrans(dat_fit, predt = 0, method = "aalen", direction = "forward", variance = FALSE)[[1]]
