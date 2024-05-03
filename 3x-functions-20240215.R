@@ -1399,6 +1399,9 @@ plot_mstate_prep <- function(# Model variables
     # Load anonymous development data
     load(url("https://github.com/rjjanse/alb/raw/main/multistate/dat_dev.Rdata"))
     
+    # Data in global environment
+    dat_mstate_dev <<- dat_mstate_dev
+    
     # Prepare individual data
     dat_fit <- msfit(mstate_fit, newdata = dat_new, trans = transition_matrix)
     
