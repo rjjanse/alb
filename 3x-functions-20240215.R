@@ -1420,10 +1420,12 @@ plot_mstate_prep <- function(# Model variables
                # State as factor
                state = factor(state, levels = c("Death", "Macroalbuminuria", "Microalbuminuria", "Event-free")),
                # Time to months
-               month = time / (365.25 / 12))
+               month = time / (365.25 / 12),
+               # Probability
+               Probability = value * 100)
     
     # Create base plot
-    plot <- ggplot(dat_plot, aes(x = month, y = value, fill = state, colour = state)) 
+    plot <- ggplot(dat_plot, aes(x = month, y = Probability, fill = state, colour = state))
     
     # If area, add area, else add line
     if(area) plot <- plot + geom_area() else plot <- plot + geom_line()
@@ -1434,10 +1436,10 @@ plot_mstate_prep <- function(# Model variables
         scale_colour_manual(values = c("#BC4749", "#1D3354", "#467599", "#F2E8CF")) +
         scale_fill_manual(values = c("#BC4749", "#1D3354", "#467599", "#F2E8CF")) +
         scale_x_continuous(breaks = seq(0, 36, 3), name = "Time (months)", expand = c(0, 0)) +
-        scale_y_continuous(breaks = seq(0, 1, 0.1), labels = paste0(seq(0, 100, 10), "%"),
+        scale_y_continuous(breaks = seq(0, 100, 10), labels = paste0(seq(0, 100, 10), "%"),
                            name = "Probability", expand = c(0, 0)) +
         # Transformations
-        coord_cartesian(xlim = c(0, 36), ylim = c(0, 1)) +
+        coord_cartesian(xlim = c(0, 36), ylim = c(0, 100)) +
         # Aesthetics
         theme(panel.border = element_rect(colour = "black", fill = "transparent"),
               legend.position = "bottom",
@@ -1447,6 +1449,6 @@ plot_mstate_prep <- function(# Model variables
               panel.grid.minor = element_blank())
     
     # If interactive, return interactive plot, else just plot
-    if(interactive) return(ggplotly(plot)) else return(plot)
+    if(interactive) return(ggplotly(plot, tooltip = c("fill"))) else return(plot)
 }
     
