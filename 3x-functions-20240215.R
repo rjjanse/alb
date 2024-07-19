@@ -315,25 +315,15 @@ cstat <- function(df, model){
     return(cstatistic)
 }
 
-# Function for validation
-validate <- function(.data,                                     # Data
-                     observed,                                  # Observed outcome
-                     predicted,                                 # Predicted outcome
-                     lp,                                        # Linear predictor
-                     model,                                     # Regression model used to create the prediction model,
-                     time = NULL,                               # Time variable (only relevant for Cox/AFT/Fine-Gray)
-                     aft_dist = "lognormal",                    # Distribution used for the AFT model
-                     # Output
-                     print_stratified = FALSE,                  # Print stratified C-statistics (only relevant for survival model)
-                     plot = TRUE,                               # Should a calibration plot be made
-                     deciles = TRUE,                            # Should deciles be added in calibration plot
-                     bootstraps = 500,                          # Number of bootstraps for C-statistic
-                     # Calibration plot details
-                     unit = "probability",                      # Unit of prediction for axes of plot
-                     annotation = c("", 0, 1),                  # Annotation to add to plot as c("annotation", x, y)
-                     smoother = TRUE,                           # Should a smoother be added? This also determines whether pseudo-obs are calculated in FG models
-                     smooth_colour = "darkred",                 # Colour of smoother
-                     histogram_label = NULL                     # Location of event / no-event label in probabilities histogram
+# Function for validation measures
+validate_measures <- function(.data,                                     # Data
+                              observed,                                  # Observed outcome
+                              predicted,                                 # Predicted outcome
+                              lp,                                        # Linear predictor
+                              model,                                     # Regression model used to create the prediction model,
+                              time = NULL,                               # Time variable (only relevant for Cox/AFT/Fine-Gray)
+                              aft_dist = "lognormal",                    # Distribution used for the AFT model
+                              pseudo_obs = FALSE                         # Should pseudo-observations be calculated
 ){
     ## Prepare data
     # Observed
@@ -377,6 +367,76 @@ validate <- function(.data,                                     # Data
     # Get total number of individuals
     n <- nrow(dat)
     
+    # Calculate pseudo-observations
+    if(pseudo_obs){
+        # Create empty id column
+        dat <- mutate(dat, ids = 1:nrow(dat))
+        
+        # Get A-J estimate for outcome in total population
+        aj_tot <- survfit(Surv(tim, obs, type = "mstate") ~ 1, data = dat) %>%
+            # Change fit list to dataframe
+            tidy() %>%
+            # Keep only events
+            filter(state == 1) %>%
+            # Keep only last observation, assuming this is the time point of interest
+            slice_tail(n = 1L) %>%
+            # Keep baseline hazard
+            extract2("estimate")
+        
+        # Get A-J estimates for excluding each individual with jackknife
+        aj_in <- do.call("c", lapply(dat[["ids"]], \(x){
+            # Create new data
+            dat_tmp <- filter(dat, ids != x)
+            
+            # Calculate A-J estimate
+            aj <- survfit(Surv(tim, obs, type = "mstate") ~ 1, data = dat_tmp) %>%
+                # Change fit list to dataframe
+                tidy() %>%
+                # Keep only events
+                filter(state == 1) %>%
+                # Keep only last observation, assuming this is the time point of interest
+                slice_tail(n = 1L) %>%
+                # Keep baseline hazard
+                extract2("estimate")
+            
+            # Return estimate
+            return(aj)
+        }))
+        
+        # Get jackknife A-J estimate per individual
+        dat <- dat %>%
+            # Calculate new variables
+            mutate(# Total A-J estimate
+                aj_t = aj_tot,
+                # Jackknife A-J estimate
+                aj_i = aj_in,
+                # Pseudovalue for the outcome
+                po = (n * aj_t) - ((n - 1) * aj_i))
+    }
+    
+    # Return final data
+    return(dat)
+}
+    
+# Validation
+validate <- function(.data,                                     # Validation measures data
+                     model,                                     # Type of model
+                     # Output
+                     return_validation_measures = TRUE,         # Return data frame with calculated validation measures
+                     plot = TRUE,                               # Should a calibration plot be made
+                     deciles = TRUE,                            # Should deciles be added in calibration plot
+                     bootstraps = 500,                          # Number of bootstraps for C-statistic
+                     # Calibration plot details
+                     unit = "probability",                      # Unit of prediction for axes of plot
+                     annotation = c("", 0, 1),                  # Annotation to add to plot as c("annotation", x, y)
+                     smoother = TRUE,                           # Should a smoother be added? This also determines whether pseudo-obs are calculated in FG models
+                     smooth_colour = "darkred",                 # Colour of smoother
+                     transparent = FALSE,                       # Transparent background
+                     histogram_label = NULL                     # Location of event / no-event label in probabilities histogram
+){
+    # Load data
+    dat <- .data
+    
     ## If plotting, prepare data and make plot
     if(plot){
         # Calculate deciles
@@ -404,56 +464,6 @@ validate <- function(.data,                                     # Data
                 select(dec, out_prop, pred_prop, nmax)
         }
         
-        # Calculate pseudo-observations if smoother
-        if(model == "fine-gray" && smoother){
-            # Create empty id column
-            dat <- mutate(dat, ids = 1:nrow(dat))
-            
-            # Get A-J estimate for outcome in total population
-            aj_tot <- survfit(Surv(tim, obs, type = "mstate") ~ 1, data = dat) %>%
-                # Change fit list to dataframe
-                tidy() %>%
-                # Keep only events
-                filter(state == 1) %>%
-                # Keep only last observation, assuming this is the time point of interest
-                slice_tail(n = 1L) %>%
-                # Keep baseline hazard
-                extract2("estimate")
-            
-            # Get A-J estimates for excluding each individual with jackknife
-            aj_in <- do.call("c", lapply(dat[["ids"]], \(x){
-                # Create new data
-                dat_tmp <- filter(dat, ids != x)
-                
-                # Calculate A-J estimate
-                aj <- survfit(Surv(tim, obs, type = "mstate") ~ 1, data = dat_tmp) %>%
-                    # Change fit list to dataframe
-                    tidy() %>%
-                    # Keep only events
-                    filter(state == 1) %>%
-                    # Keep only last observation, assuming this is the time point of interest
-                    slice_tail(n = 1L) %>%
-                    # Keep baseline hazard
-                    extract2("estimate")
-                
-                # Return estimate
-                return(aj)
-            }))
-            
-            # Get jackknife A-J estimate per individual
-            dat <- dat %>%
-                # Calculate new variables
-                mutate(# Total A-J estimate
-                    aj_t = aj_tot,
-                    # Jackknife A-J estimate
-                    aj_i = aj_in,
-                    # Pseudovalue for the outcome
-                    aj_o = (n * aj_t) - ((n - 1) * aj_i))
-        }
-        
-        # Set y variable based on model
-        if(model == "fine-gray" && smoother) dat <- mutate(dat, y = aj_o) else dat <- mutate(dat, y = obs_ncr)
-        
         ## Define characteristics of the plot
         # Upper limits of axes
         if(model %in% c("poisson", "linear", "aft")) xmax <- ymax <- max(obs) else xmax <- ymax <- 1
@@ -474,11 +484,23 @@ validate <- function(.data,                                     # Data
         if(is.null(histogram_label)) histogram_label <- as.numeric(names(sort(table(round(dat[["prd"]], 3))))[[1]])
         
         ## Create plot
-        # Create base scatter plot
-        plot_cal <- ggplot(dat, aes(x = prd, y = y)) +
-            # Geometries
-            geom_abline(colour = "black", linewidth = 2, alpha = 0.33) +
-            geom_point(alpha = 0.25)
+        # Plots that do not require pseudo-observations
+        if(!(model == "fine-gray")){
+            # Create base scatter plot
+            plot_cal <- ggplot(dat, aes(x = prd, y = y)) +
+                # Geometries
+                geom_abline(colour = "black", linewidth = 2, alpha = 0.33) +
+                geom_point(alpha = 0.25)
+        }
+        
+        # If Fine-Gray model, use pseudo-observations
+        if(model == "fine-gray"){
+            # Create base scatter plot
+            plot_cal <- ggplot(dat, aes(x = prd, y = po)) +
+                # Geometries
+                geom_abline(colour = "black", linewidth = 2, alpha = 0.33) +
+                geom_point(alpha = 0.25)
+        }
 
         # If smoother, add smoother
         if(smoother) plot_cal <- plot_cal + geom_smooth(colour = smooth_colour, fill = smooth_colour, method = "loess", formula = y ~ x)
@@ -512,10 +534,19 @@ validate <- function(.data,                                     # Data
             annotate("text", x = as.numeric(annotation[[2]]), y = as.numeric(annotation[[3]]), 
                      label = annotation[[1]], fontface = "bold", size = 10) +
             # Aesthetics
-            theme(panel.background = element_blank(),
+            theme(panel.background = element_rect(fill = "white"),
                   panel.grid = element_blank(),
                   axis.line = element_blank()) +
-            panel_border(colour = "black", size = 1) 
+            panel_border(colour = "black", size = 1)
+        
+        # Make background transparent if required
+        if(transparent){
+            plot_cal <- plot_cal + 
+                # Aesthetics
+                theme(plot.background = element_blank(),
+                      axis.title = element_text(colour = "white"),
+                      axis.text = element_text(colour = "white"))
+        }
         
         # Create probability histogram for non-continuous models
         if(!(model %in% c("poisson", "linear", "aft"))){
@@ -537,13 +568,22 @@ validate <- function(.data,                                     # Data
                 # Transformations
                 coord_cartesian(xlim = c(xmin, xmax), ylim = c(-max(table(round(dat[["prd"]], 3))), max(table(round(dat[["prd"]], 3))))) +
                 # Aesthetics
-                theme(panel.background = element_blank(),
+                theme(panel.background = element_rect(fill = "white"),
                       panel.grid = element_blank(),
                       axis.line = element_blank(),
                       axis.ticks.y = element_blank(),
                       axis.text.y = element_blank(),
                       axis.title.y = element_blank()) +
                 panel_border(colour = "black", size = 1)
+            
+            # Make background transparent if required
+            if(transparent){
+                plot_his <- plot_his + 
+                    # Aesthetics
+                    theme(plot.background = element_blank(),
+                          axis.title = element_text(colour = "white"),
+                          axis.text = element_text(colour = "white"))
+            }
             
             # Combine plots
             plot_cal <- suppressWarnings(plot_grid(plot_cal, plot_his, align = c("hv"), axis = c("tblr"), ncol = 1, rel_heights = c(3, 1)))
@@ -555,10 +595,31 @@ validate <- function(.data,                                     # Data
     if(!(model %in% c("linear", "poisson", "aft"))) prop_out <- prop.table(table(dat[["obs"]]))[["1"]]
     
     # Get mean of outcome for continous models
-    else prop_out <- mean(obs)
+    else prop_out <- mean(dat[["obs"]])
     
-    # Calibration-in-the-large
-    citl <- format(round(prop_out / mean(prd), 3), nsmall = 3)
+    # Calibration-in-the-large for non-fine-gray
+    if(!(model == "fine-gray")) citl <- format(round(prop_out / mean(dat[["prd"]]), 3), nsmall = 3)
+    
+    # Calibation-in-the-large with cumulative incidence function for Fine-Gray model
+    else {
+        citl <- 
+            (# Fit cumulative incidence function
+             survfit(Surv(tim, obs, type = "mstate") ~ 1, data = dat) %>%
+                 # Change fit list to dataframe
+                 tidy() %>%
+                 # Keep only events
+                 filter(state == 1) %>%
+                 # Keep only last observation, assuming this is the time point of interest
+                 slice_tail(n = 1L) %>%
+                 # Keep baseline hazard
+                 extract2("estimate")) %>%
+            # Divide by mean predicted risk
+            divide_by(mean(dat[["prd"]])) %>%
+            # Round
+            round(digits = 3) %>%
+            # Format
+            format(nsmall = 3)
+    }
     
     ## Calculate calibration slope
     # Generalized linear model
@@ -587,7 +648,7 @@ validate <- function(.data,                                     # Data
             set.seed(x)
             
             # Get random sample numbers
-            nrs <- sample.int(length(prd), replace = TRUE)
+            nrs <- sample.int(length(dat[["prd"]]), replace = TRUE)
             
             # Get samples
             dat_samp <- dat[nrs, ] %>%
@@ -1405,7 +1466,7 @@ plot_mstate_prep <- function(# Model variables
     # Prepare individual data
     dat_fit <- msfit(mstate_fit, newdata = dat_new, trans = transition_matrix)
     
-    # Get individual probabilities (predt = 365 * 3, else code does not function)
+    # Get individual probabilities 
     probs <- probtrans(dat_fit, predt = 0, method = "aalen", direction = "forward", variance = FALSE)[[1]]
     
     # Create plotting data
