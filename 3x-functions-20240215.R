@@ -193,6 +193,9 @@ develop <- function(df, imp, formula, model, horizon, aft_dist, all_bhs){
             set_colnames(c("a", colnames(.)[2:length(colnames(.))]))
     }
     
+    # Also get the scale for AFT models
+    if(model == "aft") assign(paste0("scale", imp), fit[["scale"]], envir = globalenv())
+    
     # Return model data and bhs if asked for
     if(!all_bhs) return(coeffs) else return(list(coeffs, bhs))
 }
@@ -276,8 +279,77 @@ dev <- function(df, formula, model, horizon, aft_dist = NULL, all_bhs = FALSE){
             select(time, bh)
     }
     
+    # For AFT models, return average scale and remove indiviudal scales
+    if(model == "aft"){
+        # Average scale
+        aft_scale <<- mean(do.call("c", lapply(paste0("scale", unique(df[[".imp"]])), get)))
+        
+        # Remove other scales
+        rm(list = paste0("scale", unique(df[[".imp"]])), pos = globalenv())
+    }
+    
     # Return model vars
     return(model_vars)
+}
+
+# Specific C-statistic for AFT time models
+aft_c <- function(time, event, pred){
+    # Get data frame
+    dat <- data.frame(time = time,
+                      event = event,
+                      pred = pred)
+    
+    # Get all individuals with events
+    events <- filter(dat, event == 1)
+    
+    # All individuals without events
+    no_events <- filter(dat, event == 0)
+    
+    # Empty holders
+    concs <- ties <- disconcs <- 0
+    
+    # Compare event vs. no event
+    for(i in 1:nrow(events)){
+        # Get predicted time for individual
+        tim <- events[[i, "pred"]]
+        
+        # Check concordancy
+        concs <- concs + sum(tim < no_events[["pred"]])         # Concordant (event has shorter time to failure)
+        ties <- ties + sum(tim == no_events[["pred"]])          # Tie        (time to failure is equal)
+        disconcs <- disconcs + sum(tim > no_events[["pred"]])   # Discordant (event has longer time to failure)
+    }
+    
+    # Compare event vs event
+    for(i in 1:nrow(events)){
+        # Predicted time for individual
+        prd_tim <- events[[i, "pred"]]
+        
+        # Observed time for individual
+        obs_tim <- events[[i, "time"]]
+        
+        # Predicted times for other individuals
+        other_prd_tim <- events[["pred"]][-i]
+        
+        # Observed times for other individuals
+        other_obs_tim <- events[["time"]][-i]
+        
+        # Comparisons
+        concs <- concs + sum(prd_tim < other_prd_tim & obs_tim < other_obs_tim, na.rm = TRUE)         # Concordant (event and predicted time occured earlier)          
+        ties <- ties + sum(prd_tim == other_prd_tim, na.rm = TRUE)                                    # Tie (predicted time is equal)
+        disconcs <- disconcs + sum(prd_tim > other_prd_tim & obs_tim < other_obs_tim, na.rm = TRUE)   # Discordant (event occurred later but predicted time earlier)
+        
+        # Set individual to NA to avoid duplicate pairs
+        events[i, ] <- NA
+    }
+    
+    # Total pairs
+    tot <- concs + disconcs + ties
+    
+    # Calculate C
+    c <- (concs + ties * 0.5) / tot
+    
+    # Return C
+    return(c)
 }
 
 # C-statistic function
@@ -309,21 +381,21 @@ cstat <- function(df, model){
     if(model %in% c("cox", "fine-gray")) cstatistic <- cIndex(dat_tmp[["tim"]], dat_tmp[["obs_ncr"]], dat_tmp[["prd"]])[["index"]]
     
     # For AFT models, use aft_status obs
-    if(model == "aft") cstatistic <- cIndex(dat_tmp[["tim"]], dat_tmp[["aft_status"]], dat_tmp[["prd"]])[["index"]]
+    if(model == "aft") cstatistic <- aft_c(dat_tmp[["tim"]], dat_tmp[["aft_status"]], dat_tmp[["prd"]])
     
     # Return C-statistic
     return(cstatistic)
 }
 
-# Function for validation measures
-validate_measures <- function(.data,                                     # Data
-                              observed,                                  # Observed outcome
-                              predicted,                                 # Predicted outcome
-                              lp,                                        # Linear predictor
-                              model,                                     # Regression model used to create the prediction model,
-                              time = NULL,                               # Time variable (only relevant for Cox/AFT/Fine-Gray)
-                              aft_dist = "lognormal",                    # Distribution used for the AFT model
-                              pseudo_obs = FALSE                         # Should pseudo-observations be calculated
+# Function for getting validation data
+validate_data <- function(.data,                                     # Data
+                          observed,                                  # Observed outcome
+                          predicted,                                 # Predicted outcome
+                          lp,                                        # Linear predictor
+                          model,                                     # Regression model used to create the prediction model,
+                          time = NULL,                               # Time variable (only relevant for Cox/AFT/Fine-Gray)
+                          aft_dist = "lognormal",                    # Distribution used for the AFT model
+                          pseudo_obs = FALSE                         # Should pseudo-observations be calculated
 ){
     ## Prepare data
     # Observed
@@ -332,8 +404,8 @@ validate_measures <- function(.data,                                     # Data
     # Set observed to numeric if it is factor
     if(is.factor(obs)) obs <- as.numeric(obs) - 1
     
-    # Observed without competing risks
-    if(model == "fine-gray") obs_ncr <- ifelse(obs == 1, 1, 0) else obs_ncr <- obs
+    # Observed without competing risks for survival models
+    if(model %in% c("fine-gray", "cox", "aft")) obs_ncr <- ifelse(obs == 1, 1, 0) else obs_ncr <- obs
     
     # Predicted
     prd <- .data[[deparse(substitute(predicted))]]
@@ -825,7 +897,6 @@ bspline_trans <- function(variable, value, df = 3, mod = model_vars){
     return(mat)
 }
     
-
 # Create function to calculate sample linear predictor
 lpsamp <- function(df, mod = model_vars){
     # Store data
@@ -909,7 +980,7 @@ lpsamp <- function(df, mod = model_vars){
 }
 
 # Create function to get predicted risks
-pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NULL, mod = model_vars){
+pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NULL, aft_scale = NULL, pred_horizon = NULL, mod = model_vars){
     # Store data
     dat_tmp <- df
     
@@ -996,7 +1067,7 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NUL
             # Time (for survival models)
             time = tim)
     
-    # For Cox/FIne-Gray models
+    # For Cox/Fine-Gray models
     if(model %in% c("cox", "fine-gray")){
         ## Calculate individual risks
         # The predicted risks from predict.coxph() from {survival} do not correspond to our calculated probabilities, because they are
@@ -1013,12 +1084,24 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NUL
             ungroup()
     }
     
-    # For AFT models (currently only for lognormal and Weibull distributions)
+    # For AFT models
     if(model == "aft"){
         # Calculate individual times
         dat_tmp <- dat_tmp %>%
-            # Calculate expected time to failure
-            mutate(prob = survreg.distributions[[aft_dist]][["itrans"]](as.numeric(model_vars[["a"]]) + lp))
+            # Calculate measures
+            mutate(# Add AFT distribution for array calculations
+                   aftdist = aft_dist,
+                   # Final linear predictor
+                   lp = as.numeric(model_vars[["a"]]) + lp,
+                   # Expected time to failure (remove intercept again)
+                   ttf = survreg.distributions[[aft_dist]][["itrans"]](lp),
+                   # Z
+                   z = if_else(aftdist == "exponential", (log(pred_horizon) - lp), (log(pred_horizon) - lp) / aft_scale),
+                   # Probability
+                   prob = case_when(aft_dist %in% c("weibull", "exponential") ~ 1 - exp(-exp(z)),
+                                    aft_dist == "lognormal" ~ 1 - pnorm(z))) %>%
+            # Remove variables
+            select(-aftdist, -z)
     }
     
     # For logistic models
@@ -1029,20 +1112,44 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NUL
             mutate(prob = 1 / (1 + exp(-(as.numeric(model_vars[["a"]]) + lp))))
     }
     
-    # Take mean of predicted value
-    dat_tmp <- dat_tmp %>%
-        # Sort for grouping
-        arrange(studynr) %>%
-        # Group on person
-        group_by(studynr) %>%
-        # Calculate final predicted probability
-        mutate(pred = mean(prob)) %>%
-        # Keep one row per person
-        slice(1L) %>%
-        # Ungroup again
-        ungroup() %>%
-        # Drop irrelevant columns
-        dplyr::select(-prob, -.imp)
+    # If no AFT, get only mean of predicted value
+    if(model != "aft"){
+        # Take mean of predicted value
+        dat_tmp <- dat_tmp %>%
+            # Sort for grouping
+            arrange(studynr) %>%
+            # Group on person
+            group_by(studynr) %>%
+            # Calculate final predicted probability
+            mutate(pred = mean(prob)) %>%
+            # Keep one row per person
+            slice(1L) %>%
+            # Ungroup again
+            ungroup() %>%
+            # Drop irrelevant columns
+            dplyr::select(-prob, -.imp)
+    }
+    
+    # If AFT, also get mean of time to failure
+    if(model == "aft"){
+        # Take mean of predicted value
+        dat_tmp <- dat_tmp %>%
+            # Sort for grouping
+            arrange(studynr) %>%
+            # Group on person
+            group_by(studynr) %>%
+            # Calculate final predictions
+            mutate(# Probability
+                   pred = mean(prob),
+                   # Time tof ailure
+                   ttf = mean(ttf)) %>%
+            # Keep one row per person
+            slice(1L) %>%
+            # Ungroup again
+            ungroup() %>%
+            # Drop irrelevant columns
+            dplyr::select(-prob, -.imp)
+    }
     
     # Return data
     return(dat_tmp)
