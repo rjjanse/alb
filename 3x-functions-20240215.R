@@ -293,11 +293,11 @@ dev <- function(df, formula, model, horizon, aft_dist = NULL, all_bhs = FALSE){
 }
 
 # Specific C-statistic for AFT time models
-aft_c <- function(time, event, pred){
+aft_c <- function(tim, evt, prd){
     # Get data frame
-    dat <- data.frame(time = time,
-                      event = event,
-                      pred = pred)
+    dat <- data.frame(time = tim,
+                      event = evt,
+                      pred = prd)
     
     # Get all individuals with events
     events <- filter(dat, event == 1)
@@ -353,9 +353,9 @@ aft_c <- function(time, event, pred){
 }
 
 # C-statistic function
-cstat <- function(df, model){
+cstat <- function(df, model, cr_validation, aft_time = FALSE){
     # Wolbers' adaptation for competing events
-    if(model == "fine-gray") dat_tmp <- mutate(df, tim = ifelse(obs >= 2, Inf, tim)) else dat_tmp <- df
+    if(cr_validation) dat_tmp <- mutate(df, tim = ifelse(obs >= 2, Inf, tim)) else dat_tmp <- df
     
     # For logistic models
     if(model == "logistic"){
@@ -378,23 +378,22 @@ cstat <- function(df, model){
     }
     
     # For survival models (Harrell's C-statistic)
-    if(model %in% c("cox", "fine-gray")) cstatistic <- cIndex(dat_tmp[["tim"]], dat_tmp[["obs_ncr"]], dat_tmp[["prd"]])[["index"]]
+    if(model %in% c("cox", "fine-gray", "aft") & !aft_time) cstatistic <- cIndex(dat_tmp[["tim"]], dat_tmp[["obs_ncr"]], dat_tmp[["prd"]])[["index"]]
     
     # For AFT models, use aft_status obs
-    if(model == "aft") cstatistic <- aft_c(dat_tmp[["tim"]], dat_tmp[["aft_status"]], dat_tmp[["prd"]])
+    if(model == "aft" & aft_time) cstatistic <- aft_c(dat_tmp[["tim"]], dat_tmp[["obs_ncr"]], dat_tmp[["prd"]])
     
     # Return C-statistic
     return(cstatistic)
 }
 
-# Function for getting validation data
+# Function for getting validation data in a standardized format
 validate_data <- function(.data,                                     # Data
                           observed,                                  # Observed outcome
                           predicted,                                 # Predicted outcome
                           lp,                                        # Linear predictor
                           model,                                     # Regression model used to create the prediction model,
                           time = NULL,                               # Time variable (only relevant for Cox/AFT/Fine-Gray)
-                          aft_dist = "lognormal",                    # Distribution used for the AFT model
                           pseudo_obs = FALSE                         # Should pseudo-observations be calculated
 ){
     ## Prepare data
@@ -416,25 +415,12 @@ validate_data <- function(.data,                                     # Data
     # Time
     if(!(deparse(substitute(time)) == "NULL")) tim <- .data[[deparse(substitute(time))]] else tim <- NA
     
-    # If model is AFT, observed should be time to event and status should be stored elsewhere
-    if(model == "aft") {
-        # Store status elsewhere
-        aft_status <- obs
-        
-        # Store EFT
-        obs <- obs_ncr <- tim
-    }
-    
-    # Else empty aft_status variable
-    else aft_status <- NA
-    
     # Create data to work with
     dat <- tibble(obs = obs,
                   obs_ncr = obs_ncr,
                   lps = lps,
                   prd = prd, 
-                  tim = tim,
-                  aft_status = aft_status)
+                  tim = tim)
     
     # Get total number of individuals
     n <- nrow(dat)
@@ -493,21 +479,25 @@ validate_data <- function(.data,                                     # Data
 # Validation
 validate <- function(.data,                                     # Validation measures data
                      model,                                     # Type of model
-                     # Output
-                     return_validation_measures = TRUE,         # Return data frame with calculated validation measures
+                     cr_validation = FALSE,                     # Should survival models be validated accounting for competing risks?
+                     bootstraps = 500,                          # Number of bootstraps for C-statistic
+                     aft_dist = NULL,                           # AFT distribution for calibration slope
+                     # Calibration plot details
                      plot = TRUE,                               # Should a calibration plot be made
                      deciles = TRUE,                            # Should deciles be added in calibration plot
-                     bootstraps = 500,                          # Number of bootstraps for C-statistic
-                     # Calibration plot details
                      unit = "probability",                      # Unit of prediction for axes of plot
                      annotation = c("", 0, 1),                  # Annotation to add to plot as c("annotation", x, y)
                      smoother = TRUE,                           # Should a smoother be added? This also determines whether pseudo-obs are calculated in FG models
+                     smoother_se = TRUE,                        # SE for smoother
                      smooth_colour = "darkred",                 # Colour of smoother
                      transparent = FALSE,                       # Transparent background
                      histogram_label = NULL                     # Location of event / no-event label in probabilities histogram
 ){
     # Load data
     dat <- .data
+    
+    # Return error if competing risk validation for non-survival model
+    if(cr_validation & !(model %in% c("fine-gray", "aft", "cox"))) stop("Error: Competing risk validation cannot be performed for non-survival models")
     
     ## If plotting, prepare data and make plot
     if(plot){
@@ -538,26 +528,26 @@ validate <- function(.data,                                     # Validation mea
         
         ## Define characteristics of the plot
         # Upper limits of axes
-        if(model %in% c("poisson", "linear", "aft")) xmax <- ymax <- max(obs) else xmax <- ymax <- 1
+        if(unit != "probability") xmax <- ymax <- pmax(dat[["obs"]]) else xmax <- ymax <- 1
         
         # Lower limits of axes
-        if(model %in% c("poisson", "linear", "aft")) xmin <- ymin <- pmin(0, min(obs)) else xmin <- ymin <- 0
+        if(unit != "probability") xmin <- ymin <- pmin(0, min(dat[["obs"]])) else xmin <- ymin <- 0
         
         # Breaks of axes
         brks <- seq(xmin, xmax, (xmax - xmin) / 10)
         
         # Labels of x-axis
-        if(model %in% c("poisson", "linear", "aft")) xlab <- paste0("Predicted ", unit) else xlab <- "Predicted probability"
+        if(unit != "probability") xlab <- paste0("Predicted ", unit) else xlab <- "Predicted probability"
         
         # Label of y-axis
-        if(model %in% c("poisson", "linear", "aft")) ylab <- paste0("Observed ", unit) else ylab <- "Observed probability"
+        if(unit != "probability") ylab <- paste0("Observed ", unit) else ylab <- "Observed probability"
         
         # Determine location of event label in probabilities histogram automatically if not specified, based on least predicted probability
         if(is.null(histogram_label)) histogram_label <- as.numeric(names(sort(table(round(dat[["prd"]], 3))))[[1]])
         
         ## Create plot
         # Plots that do not require pseudo-observations
-        if(!(model == "fine-gray")){
+        if(!cr_validation){
             # Create base scatter plot
             plot_cal <- ggplot(dat, aes(x = prd, y = y)) +
                 # Geometries
@@ -565,8 +555,8 @@ validate <- function(.data,                                     # Validation mea
                 geom_point(alpha = 0.25)
         }
         
-        # If Fine-Gray model, use pseudo-observations
-        if(model == "fine-gray"){
+        # If competing risk validation, use pseudo-observations
+        if(cr_validation){
             # Create base scatter plot
             plot_cal <- ggplot(dat, aes(x = prd, y = po)) +
                 # Geometries
@@ -575,16 +565,17 @@ validate <- function(.data,                                     # Validation mea
         }
 
         # If smoother, add smoother
-        if(smoother) plot_cal <- plot_cal + geom_smooth(colour = smooth_colour, fill = smooth_colour, method = "loess", formula = y ~ x)
+        if(smoother) plot_cal <- plot_cal + geom_smooth(colour = smooth_colour, fill = smooth_colour, method = "loess", 
+                                                        se = smoother_se, formula = y ~ x)
         
-        # If AFT model, overwrite base scatter plot to add colouring for different statuses
-        if(model == "aft"){
+        # If AFT time model, overwrite base scatter plot to add colouring for different statuses
+        if(model == "aft" & unit != "probability"){
             # Create base scatter plot
-            plot_cal <- ggplot(dat, aes(x = prd, y = y)) +
+            plot_cal <- ggplot(dat, aes(x = prd, y = tim)) +
                 # Geometries
                 geom_abline(colour = "black", linewidth = 2, alpha = 0.33) +
-                geom_point(alpha = 0.25, mapping = aes(colour = factor(aft_status, levels = c(0, 1), labels = c("No-event", "Event")))) +
-                geom_smooth(colour = smooth_colour, fill = smooth_colour, method = "loess", formula = y ~ x) + 
+                geom_point(alpha = 0.25, mapping = aes(colour = factor(obs_ncr, levels = c(0, 1), labels = c("No-event", "Event")))) +
+                geom_smooth(colour = smooth_colour, fill = smooth_colour, method = "loess", se = smoother_se, formula = y ~ x) + 
                 # Scaling
                 scale_colour_manual(values = c("darkorange", "darkred")) +
                 # Aesthetics
@@ -621,7 +612,7 @@ validate <- function(.data,                                     # Validation mea
         }
         
         # Create probability histogram for non-continuous models
-        if(!(model %in% c("poisson", "linear", "aft"))){
+        if(unit == "probability"){
             # Turn off x-axis for calibration plot
             plot_cal <- plot_cal + theme(axis.ticks.x = element_blank(),
                                          axis.text.x = element_blank(),
@@ -664,15 +655,15 @@ validate <- function(.data,                                     # Validation mea
     
     ## Calculate performance measures
     # Get proportion of outcome for non-continuous models
-    if(!(model %in% c("linear", "poisson", "aft"))) prop_out <- prop.table(table(dat[["obs"]]))[["1"]]
+    if(unit == "probability") prop_out <- prop.table(table(dat[["obs"]]))[["1"]]
     
     # Get mean of outcome for continous models
     else prop_out <- mean(dat[["obs"]])
     
     # Calibration-in-the-large for non-fine-gray
-    if(!(model == "fine-gray")) citl <- format(round(prop_out / mean(dat[["prd"]]), 3), nsmall = 3)
+    if(!cr_validation) citl <- format(round(prop_out / mean(dat[["prd"]]), 3), nsmall = 3)
     
-    # Calibation-in-the-large with cumulative incidence function for Fine-Gray model
+    # Calibation-in-the-large with cumulative incidence function for competing risks
     else {
         citl <- 
             (# Fit cumulative incidence function
@@ -699,7 +690,7 @@ validate <- function(.data,                                     # Validation mea
                                                                             data = dat)[["coefficients"]][["lps"]], 3), nsmall = 3)
     
     # Cox model
-    if(model == "cox") cslope <- format(round(coxph(Surv(tim, obs) ~ lps, data = dat)[["coefficients"]][["lps"]], 3), nsmall = 3)
+    if(model == "cox") cslope <- format(round(coxph(Surv(tim, obs_ncr) ~ lps, data = dat)[["coefficients"]][["lps"]], 3), nsmall = 3)
     
     # Fine-Gray model
     if(model == "fine-gray") cslope <- format(round(coxph(Surv(fgstart, fgstop, fgstatus) ~ lps, weight = fgwt, 
@@ -707,12 +698,15 @@ validate <- function(.data,                                     # Validation mea
                                                     3), nsmall = 3)
     
     # AFT model
-    if(model == "aft") cslope <- format(round(survreg(Surv(tim, aft_status) ~ lps, data = dat, dist = aft_dist)[["coefficients"]][["lps"]], 3), nsmall = 3)
+    if(model == "aft") cslope <- format(round(survreg(Surv(tim, obs_ncr) ~ lps, data = dat, dist = aft_dist)[["coefficients"]][["lps"]], 3), nsmall = 3)
 
+    # Is AFT time being treated
+    aft_time <- ifelse(unit == "probability", FALSE, TRUE)
+    
     # C-statistic
     if(!(model %in% c("linear", "poisson"))){
         # Calculate C statistic
-        c <- cstat(dat, model)
+        c <- cstat(dat, model, cr_validation, aft_time)
         
         # Calculate confidence interval around C statistic
         ci <- quantile(do.call("c", lapply(1:bootstraps, \(x){
@@ -728,7 +722,7 @@ validate <- function(.data,                                     # Validation mea
                 mutate(studynr = 1:nrow(dat))
             
             # Calculate statistic
-            c_bootstrap <- cstat(dat_samp, model)
+            c_bootstrap <- cstat(dat_samp, model, cr_validation, aft_time)
             
             # Return statistic
             return(c_bootstrap)
@@ -1099,7 +1093,7 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NUL
                    z = if_else(aftdist == "exponential", (log(pred_horizon) - lp), (log(pred_horizon) - lp) / aft_scale),
                    # Probability
                    prob = case_when(aft_dist %in% c("weibull", "exponential") ~ 1 - exp(-exp(z)),
-                                    aft_dist == "lognormal" ~ 1 - pnorm(z))) %>%
+                                    aft_dist == "lognormal" ~ pnorm(z))) %>%
             # Remove variables
             select(-aftdist, -z)
     }
