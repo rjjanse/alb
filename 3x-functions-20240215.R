@@ -528,7 +528,7 @@ validate <- function(.data,                                     # Validation mea
         
         ## Define characteristics of the plot
         # Upper limits of axes
-        if(unit != "probability") xmax <- ymax <- pmax(dat[["obs"]]) else xmax <- ymax <- 1
+        if(unit != "probability") xmax <- ymax <- max(dat[["obs"]]) else xmax <- ymax <- 1
         
         # Lower limits of axes
         if(unit != "probability") xmin <- ymin <- pmin(0, min(dat[["obs"]])) else xmin <- ymin <- 0
@@ -1614,3 +1614,73 @@ plot_mstate_prep <- function(# Model variables
     if(interactive) return(ggplotly(plot, tooltip = c("fill"))) else return(plot)
 }
     
+# Get predictions at time point X for individual survival curves
+preds_isc <- function(df, timepoint, hazards){
+    # Calculate prediction at timepoint for each individual
+    dat_tmp <- df %>%
+        # Add variables
+        mutate(# Timepoint
+               t = timepoint,
+               # Hazard at timepoint
+               haz = hazards[timepoint, 2],
+               # Prediction at timepoint
+               pred = 1 - exp(-exp(lp) * (haz)),
+               # Event at timepoint
+               event = ifelse(t >= time, observed, "censored"),
+               # Clean event
+               event = case_match(event, 
+                                  "censored" ~ 0,
+                                  "2" ~ 1,
+                                  "3" ~ 2),
+               # Factor event
+               event = factor(event, levels = 0:2, labels = c("censored", "microalbuminuria", "died")),
+               # New time
+               time_capped = ifelse(time < t, time, t)) %>%
+        # Remove hazard
+        select(-haz)
+    
+    # Return data
+    return(dat_tmp)
+}
+
+# C statistic
+cstatistic <- function(df, model, observed, predicted, time, cr_validation = TRUE, bootstraps = 100, aft_time = FALSE){
+    # Load data
+    dat_tmp <- df
+    
+    # Add observed events
+    dat_tmp[["obs"]] <- as.numeric(df[[observed]]) - 1
+    
+    # Add predicted
+    dat_tmp[["prd"]] <- df[[predicted]] 
+    
+    # Add time
+    dat_tmp[["tim"]] <- df[[time]]
+    
+    # Calculate C statistic
+    c <- cstat(dat_tmp, model, cr_validation, aft_time)
+    
+    # Calculate confidence interval around C statistic
+    ci <- quantile(do.call("c", lapply(1:bootstraps, \(x){
+        # Set seed
+        set.seed(x)
+        
+        # Get random sample numbers
+        nrs <- sample.int(length(dat_tmp[[predicted]]), replace = TRUE)
+        
+        # Get samples
+        dat_samp <- dat_tmp[nrs, ] %>%
+            # Change studynr
+            mutate(studynr = 1:nrow(dat_tmp))
+        
+        # Calculate statistic
+        c_bootstrap <- cstat(dat_samp, model, cr_validation, aft_time)
+        
+        # Return statistic
+        return(c_bootstrap)
+    })), probs = c(0.025, 0.975), na.rm = TRUE)
+    
+
+    # Return C-statistic
+    return(data.frame(c = c, ll = ci[[1]], ul = ci[[2]]))
+}
