@@ -1629,6 +1629,7 @@ preds_isc <- function(df, timepoint, hazards){
                event = ifelse(t >= time, observed, "censored"),
                # Clean event
                event = case_match(event, 
+                                  "1" ~ 0,
                                   "censored" ~ 0,
                                   "2" ~ 1,
                                   "3" ~ 2),
@@ -1650,6 +1651,9 @@ cstatistic <- function(df, model, observed, predicted, time, cr_validation = TRU
     
     # Add observed events
     dat_tmp[["obs"]] <- as.numeric(df[[observed]]) - 1
+    
+    # Observed without competing risks for survival models
+    if(model %in% c("fine-gray", "cox", "aft")) dat_tmp[["obs_ncr"]] <- ifelse(dat_tmp[["obs"]] == 1, 1, 0) else  dat_tmp[["obs_ncr"]] <-  dat_tmp[["obs"]]
     
     # Add predicted
     dat_tmp[["prd"]] <- df[[predicted]] 
