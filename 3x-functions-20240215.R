@@ -430,6 +430,9 @@ validate_data <- function(.data,                                     # Data
         # Create empty id column
         dat <- mutate(dat, ids = 1:nrow(dat))
         
+        # Get total individuals
+        tot <- length(dat[["ids"]])
+        
         # Get A-J estimate for outcome in total population
         aj_tot <- survfit(Surv(tim, obs, type = "mstate") ~ 1, data = dat) %>%
             # Change fit list to dataframe
@@ -441,10 +444,25 @@ validate_data <- function(.data,                                     # Data
             # Keep baseline hazard
             extract2("estimate")
         
+        # Empty lists for runtimes
+        runtime_min <- list(); runtime_hours <- list()
+        
+        # Get current timepoint
+        curr_t <- max(dat[["tim"]])
+        
+        # Print current timepoint
+        cat("Timepoint", round(curr_t, 1), "\n")
+        
         # Get A-J estimates for excluding each individual with jackknife
-        aj_in <- do.call("c", lapply(dat[["ids"]], \(x){
+        aj_in <- do.call("c", lapply(1:tot, \(x){
+            # Get starting time
+            start <- Sys.time()
+            
+            # Get ID
+            id <- dat[["ids"]][[x]]
+            
             # Create new data
-            dat_tmp <- filter(dat, ids != x)
+            dat_tmp <- filter(dat, ids != id)
             
             # Calculate A-J estimate
             aj <- survfit(Surv(tim, obs, type = "mstate") ~ 1, data = dat_tmp) %>%
@@ -456,6 +474,27 @@ validate_data <- function(.data,                                     # Data
                 slice_tail(n = 1L) %>%
                 # Keep baseline hazard
                 extract2("estimate")
+            
+            # Get finish time
+            finish <- Sys.time()
+            
+            # Get runtime in minutes and hours
+            runtime_min[[x]] <- as.numeric(difftime(finish, start, units = "mins"))
+            runtime_hours[[x]] <- as.numeric(difftime(finish, start, units = "hours"))
+            
+            # Calculate estimated total time and remaining time in minutes and hours
+            # Calculated as passed time + median runtime times remaining individuals
+            totaltime_min <- sum(do.call("c", runtime_min)) + (tot - x) * median(do.call("c", runtime_min))
+            totaltime_hours <- sum(do.call("c", runtime_hours)) + (tot - x) * median(do.call("c", runtime_hours))
+
+            # Remaining time is total time minus passed time
+            remainingtime_min <- totaltime_min - sum(do.call("c", runtime_min))
+            remainingtime_hours <- totaltime_hours - sum(do.call("c", runtime_hours))
+            
+            # Print times and finished nth individual out of total
+            cat("\rFinished iterations:", x, "/", tot, "|| Estimated remaining time:",
+                format(round(remainingtime_min, 1), nsmall = 1), "minutes or", format(round(remainingtime_hours, 1), nsmall = 1), "hours.        ")
+            flush.console() 
             
             # Return estimate
             return(aj)
