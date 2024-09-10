@@ -1188,6 +1188,130 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NUL
     return(dat_tmp)
 }
 
+# Get predictions at time point X for individual survival curves
+preds_isc <- function(df, timepoint, hazards){
+    # Calculate prediction at timepoint for each individual
+    dat_tmp <- df %>%
+        # Add variables
+        mutate(# Timepoint
+            t = timepoint,
+            # Hazard at timepoint
+            haz = hazards[timepoint, 2],
+            # Prediction at timepoint
+            pred = 1 - exp(-exp(lp) * (haz)),
+            # Event at timepoint
+            event = ifelse(t >= time, observed, "censored"),
+            # Clean event
+            event = case_match(event, 
+                               "1" ~ 0,
+                               "censored" ~ 0,
+                               "2" ~ 1,
+                               "3" ~ 2),
+            # Factor event
+            event = factor(event, levels = 0:2, labels = c("censored", "microalbuminuria", "died")),
+            # New time
+            time_capped = ifelse(time < t, time, t)) %>%
+        # Remove hazard
+        select(-haz)
+    
+    # Return data
+    return(dat_tmp)
+}
+
+# C statistic
+cstatistic <- function(df, model, observed, predicted, time, cr_validation = TRUE, bootstraps = 100, aft_time = FALSE){
+    # Load data
+    dat_tmp <- df
+    
+    # Add observed events
+    dat_tmp[["obs"]] <- as.numeric(df[[observed]]) - 1
+    
+    # Observed without competing risks for survival models
+    if(model %in% c("fine-gray", "cox", "aft")) dat_tmp[["obs_ncr"]] <- ifelse(dat_tmp[["obs"]] == 1, 1, 0) else  dat_tmp[["obs_ncr"]] <-  dat_tmp[["obs"]]
+    
+    # Add predicted
+    dat_tmp[["prd"]] <- df[[predicted]] 
+    
+    # Add time
+    dat_tmp[["tim"]] <- df[[time]]
+    
+    # Calculate C statistic
+    c <- cstat(dat_tmp, model, cr_validation, aft_time)
+    
+    # Calculate confidence interval around C statistic
+    ci <- quantile(do.call("c", lapply(1:bootstraps, \(x){
+        # Set seed
+        set.seed(x)
+        
+        # Get random sample numbers
+        nrs <- sample.int(length(dat_tmp[[predicted]]), replace = TRUE)
+        
+        # Get samples
+        dat_samp <- dat_tmp[nrs, ] %>%
+            # Change studynr
+            mutate(studynr = 1:nrow(dat_tmp))
+        
+        # Calculate statistic
+        c_bootstrap <- cstat(dat_samp, model, cr_validation, aft_time)
+        
+        # Return statistic
+        return(c_bootstrap)
+    })), probs = c(0.025, 0.975), na.rm = TRUE)
+    
+    
+    # Return C-statistic
+    return(data.frame(c = c, ll = ci[[1]], ul = ci[[2]]))
+}
+
+# Create function to calculate multistate predicted risks per individual per imputation
+preds_mst <- function(df, subject, imputation, model_fit = mstate_fit){
+    # Set-up transition matrix
+    mat_trans <- transMat(x = list(2:4, 3:4, 4, c()),
+                          names = c("Baseline", "Microalbuminuria", "Macroalbuminuria", "Death"))
+    
+    # Check if development data exists
+    if(!exists("dat_mstate_dev")) stop("Development data is not loaded: make sure dat_mstate_dev is present in Global Environment.")
+    
+    # Get temporary data
+    dat_tmp <- filter(df, studynr == subject & .imp == imputation)
+    
+    # Select all predictor columns
+    dat_new <- select(dat_tmp, all_of(columns))
+    
+    # Duplicate new data for each transition
+    dat_new <- bind_rows(replicate(6, dat_new, simplify = FALSE))
+    
+    # Add new (empty) columns
+    for(i in new_cols) dat_new[[i]] <- NA
+    
+    # Set new column values to covariate value if stratum, else 0
+    dat_new <- dat_new %>%
+        # Set column values
+        # If the number in the column name equals the row number (i.e. stratum), get that value from the original columns, else set to 0
+        mutate(across(all_of(new_cols), \(x) x = ifelse(as.numeric(str_extract(cur_column(), "(?<=\\.)\\d")) == row_number(), 
+                                                        dat_new[[str_replace(cur_column(), "\\.\\d", "")]], 0))) %>%
+        # Add stratum and trans variables
+        mutate(strata = 1:6,
+               trans = 1:6) %>%
+        # Remove unnecessary variables
+        select(-all_of(columns))
+    
+    # Prepare individual data
+    dat_fit <- msfit(model_fit, newdata = dat_new, trans = mat_trans)
+    
+    # Get individual probabilities for each timepoint
+    probs <- probtrans(dat_fit, predt = 0, method = "aalen", direction = "forward", variance = FALSE)[[1]]
+    
+    # Return probs
+    return(probs)
+}
+
+                      
+
+
+
+
+### FIX THESE FOR CORRECT INDIVIDUAL SURVIVAL CURVES
 # Function for fitted model
 mv <- function(){
     # Create model vars based on dput()
@@ -1501,6 +1625,24 @@ tm <- function(){
                               to = c("Baseline", "Microalbuminuria", "Macroalbuminuria", "Death")))
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # Data preparation for multi state prediction
 plot_mstate_prep <- function(# Model variables
                              female,
@@ -1595,10 +1737,10 @@ plot_mstate_prep <- function(# Model variables
         select(-all_of(columns))
  
     # Load mstate fit
-    load(url("https://github.com/rjjanse/alb/raw/main/multistate/mstate_fit.Rdata"))
+    #load(url("https://github.com/rjjanse/alb/raw/main/multistate/mstate_fit.Rdata"))
     
     # Load anonymous development data
-    load(url("https://github.com/rjjanse/alb/raw/main/multistate/dat_dev.Rdata"))
+    #load(url("https://github.com/rjjanse/alb/raw/main/multistate/dat_dev.Rdata"))
     
     # Data in global environment
     dat_mstate_dev <<- dat_mstate_dev
@@ -1653,77 +1795,3 @@ plot_mstate_prep <- function(# Model variables
     if(interactive) return(ggplotly(plot, tooltip = c("fill"))) else return(plot)
 }
     
-# Get predictions at time point X for individual survival curves
-preds_isc <- function(df, timepoint, hazards){
-    # Calculate prediction at timepoint for each individual
-    dat_tmp <- df %>%
-        # Add variables
-        mutate(# Timepoint
-               t = timepoint,
-               # Hazard at timepoint
-               haz = hazards[timepoint, 2],
-               # Prediction at timepoint
-               pred = 1 - exp(-exp(lp) * (haz)),
-               # Event at timepoint
-               event = ifelse(t >= time, observed, "censored"),
-               # Clean event
-               event = case_match(event, 
-                                  "1" ~ 0,
-                                  "censored" ~ 0,
-                                  "2" ~ 1,
-                                  "3" ~ 2),
-               # Factor event
-               event = factor(event, levels = 0:2, labels = c("censored", "microalbuminuria", "died")),
-               # New time
-               time_capped = ifelse(time < t, time, t)) %>%
-        # Remove hazard
-        select(-haz)
-    
-    # Return data
-    return(dat_tmp)
-}
-
-# C statistic
-cstatistic <- function(df, model, observed, predicted, time, cr_validation = TRUE, bootstraps = 100, aft_time = FALSE){
-    # Load data
-    dat_tmp <- df
-    
-    # Add observed events
-    dat_tmp[["obs"]] <- as.numeric(df[[observed]]) - 1
-    
-    # Observed without competing risks for survival models
-    if(model %in% c("fine-gray", "cox", "aft")) dat_tmp[["obs_ncr"]] <- ifelse(dat_tmp[["obs"]] == 1, 1, 0) else  dat_tmp[["obs_ncr"]] <-  dat_tmp[["obs"]]
-    
-    # Add predicted
-    dat_tmp[["prd"]] <- df[[predicted]] 
-    
-    # Add time
-    dat_tmp[["tim"]] <- df[[time]]
-    
-    # Calculate C statistic
-    c <- cstat(dat_tmp, model, cr_validation, aft_time)
-    
-    # Calculate confidence interval around C statistic
-    ci <- quantile(do.call("c", lapply(1:bootstraps, \(x){
-        # Set seed
-        set.seed(x)
-        
-        # Get random sample numbers
-        nrs <- sample.int(length(dat_tmp[[predicted]]), replace = TRUE)
-        
-        # Get samples
-        dat_samp <- dat_tmp[nrs, ] %>%
-            # Change studynr
-            mutate(studynr = 1:nrow(dat_tmp))
-        
-        # Calculate statistic
-        c_bootstrap <- cstat(dat_samp, model, cr_validation, aft_time)
-        
-        # Return statistic
-        return(c_bootstrap)
-    })), probs = c(0.025, 0.975), na.rm = TRUE)
-    
-
-    # Return C-statistic
-    return(data.frame(c = c, ll = ci[[1]], ul = ci[[2]]))
-}
