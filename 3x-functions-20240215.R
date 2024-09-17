@@ -169,7 +169,7 @@ develop <- function(df, imp, formula, model, horizon, aft_dist, all_bhs){
             times <- 1:horizon
             
             # Get baseline hazards for each timepoint
-            bhs <- do.call("c", c(0, lapply(times[2:length(times)], \(x) {
+            bhs <- do.call("c", c(0, lapply(times[2:length(times)], function(x) {
                 # All baseline hazards
                 basehaz(fit) %>% 
                     # Hazards before timepoint of interest
@@ -204,19 +204,19 @@ develop <- function(df, imp, formula, model, horizon, aft_dist, all_bhs){
 dev <- function(df, formula, model, horizon, aft_dist = NULL, all_bhs = FALSE){
     # Fit model for each imputation and add together the final models as normal if not all baseline hazards are requested
     if(!all_bhs){
-        mod <- do.call("rbind", lapply(unique(df[[".imp"]]), \(x) develop(df, x, formula, model, horizon, aft_dist, all_bhs)))
+        mod <- do.call("rbind", lapply(unique(df[[".imp"]]), function(x) develop(df, x, formula, model, horizon, aft_dist, all_bhs)))
     }
     
     # Else store list and then bind models
     else {
         # Individual models
-        models <- lapply(unique(df[[".imp"]]), \(x) develop(df, x, formula, model, horizon, aft_dist, all_bhs))
+        models <- lapply(unique(df[[".imp"]]), function(x) develop(df, x, formula, model, horizon, aft_dist, all_bhs))
         
         # Bind models
-        mod <- do.call("rbind", lapply(unique(df[[".imp"]]), \(x) models[[x]][[1]]))
+        mod <- do.call("rbind", lapply(unique(df[[".imp"]]), function(x) models[[x]][[1]]))
         
         # Bind baseline hazards
-        all_bh <- do.call("rbind", lapply(unique(df[[".imp"]]), \(x) models[[x]][[2]])) %>%
+        all_bh <- do.call("rbind", lapply(unique(df[[".imp"]]), function(x) models[[x]][[2]])) %>%
             # Change to data frame
             as.data.frame()
     }
@@ -374,7 +374,7 @@ cstat <- function(df, model, cr_validation, aft_time = FALSE){
             extract2("prd")
         
         # Compare all events with all non-events and calculate C-statistic
-        cstatistic <- sum((tmp <- do.call("c", lapply(events, \(x) ifelse(x > no_events, 1, ifelse(x == no_events, 0.5, 0)))))) / length(tmp); rm(tmp)
+        cstatistic <- sum((tmp <- do.call("c", lapply(events, function(x) ifelse(x > no_events, 1, ifelse(x == no_events, 0.5, 0)))))) / length(tmp); rm(tmp)
     }
     
     # For survival models (Harrell's C-statistic)
@@ -454,7 +454,7 @@ validate_data <- function(.data,                                     # Data
         cat("Timepoint", round(curr_t, 1), "\n")
         
         # Get A-J estimates for excluding each individual with jackknife
-        aj_in <- do.call("c", lapply(1:tot, \(x){
+        aj_in <- do.call("c", lapply(1:tot, function(x){
             # Get starting time
             start <- Sys.time()
             
@@ -748,7 +748,7 @@ validate <- function(.data,                                     # Validation mea
         c <- cstat(dat, model, cr_validation, aft_time)
         
         # Calculate confidence interval around C statistic
-        ci <- quantile(do.call("c", lapply(1:bootstraps, \(x){
+        ci <- quantile(do.call("c", lapply(1:bootstraps, function(x){
             # Set seed
             set.seed(x)
             
@@ -861,10 +861,10 @@ model_inf <- function(mod){
         spline_levels <- str_split(bspline[["knots"]], ",", simplify = TRUE)
         
         # Get vector with lower levels
-        lower_levels <- as.numeric(lapply(1:nrow(bspline), \(x) spline_levels[x, bspline[[x, "levels"]]]))
+        lower_levels <- as.numeric(lapply(1:nrow(bspline), function(x) spline_levels[x, bspline[[x, "levels"]]]))
         
         # Get vector with upper levels
-        upper_levels <- as.numeric(lapply(1:nrow(bspline), \(x) spline_levels[x, bspline[[x, "levels"]] + 1]))
+        upper_levels <- as.numeric(lapply(1:nrow(bspline), function(x) spline_levels[x, bspline[[x, "levels"]] + 1]))
         
         # Add information to spline_info
         transspline_info <- mutate(bspline, 
@@ -939,7 +939,7 @@ lpsamp <- function(df, mod = model_vars){
     model_info <- model_inf(mod)
     
     # Calculate LP fractions
-    lp_fracs <- bind_cols(lapply(1:nrow(model_info), \(x){
+    lp_fracs <- bind_cols(lapply(1:nrow(model_info), function(x){
         # Get variable of interest
         var <- model_info[x, "var"][[1]]
 
@@ -1021,7 +1021,7 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NUL
     model_info <- model_inf(mod)
     
     # Calculate LP fractions
-    lp_fracs <- bind_cols(lapply(1:nrow(model_info), \(x){
+    lp_fracs <- bind_cols(lapply(1:nrow(model_info), function(x){
         # Get variable of interest
         var <- model_info[x, "var"][[1]]
         
@@ -1084,7 +1084,7 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NUL
     tim <- arrange(df, studynr, .imp)[[deparse(substitute(time))]]
     
     # Sum linear predictors
-    lp_sums <- do.call("c", lapply(1:nrow(lp_fracs), \(x) sum(t(lp_fracs[x, ]), na.rm = TRUE)))
+    lp_sums <- do.call("c", lapply(1:nrow(lp_fracs), function(x) sum(t(lp_fracs[x, ]), na.rm = TRUE)))
     
     # Get final linear predictors
     dat_tmp <- df %>%
@@ -1239,7 +1239,7 @@ cstatistic <- function(df, model, observed, predicted, time, cr_validation = TRU
     c <- cstat(dat_tmp, model, cr_validation, aft_time)
     
     # Calculate confidence interval around C statistic
-    ci <- quantile(do.call("c", lapply(1:bootstraps, \(x){
+    ci <- quantile(do.call("c", lapply(1:bootstraps, function(x){
         # Set seed
         set.seed(x)
         
@@ -1288,7 +1288,7 @@ preds_mst <- function(df, subject, imputation, model_fit = mstate_fit){
     dat_new <- dat_new %>%
         # Set column values
         # If the number in the column name equals the row number (i.e. stratum), get that value from the original columns, else set to 0
-        mutate(across(all_of(new_cols), \(x) x = ifelse(as.numeric(str_extract(cur_column(), "(?<=\\.)\\d")) == row_number(), 
+        mutate(across(all_of(new_cols), function(x) x = ifelse(as.numeric(str_extract(cur_column(), "(?<=\\.)\\d")) == row_number(), 
                                                         dat_new[[str_replace(cur_column(), "\\.\\d", "")]], 0))) %>%
         # Add stratum and trans variables
         mutate(strata = 1:6,
@@ -1717,7 +1717,7 @@ plot_mstate_prep <- function(# Model variables
     }
     
     # Create new column names
-    new_cols <- sort(do.call("c", lapply(1:6, \(x) paste0(columns, ".", x))))
+    new_cols <- sort(do.call("c", lapply(1:6, function(x) paste0(columns, ".", x))))
     
     # Duplicate new data for each transition (6)
     dat_new <- rbind(data_new, data_new, data_new, data_new, data_new, data_new)
@@ -1728,7 +1728,7 @@ plot_mstate_prep <- function(# Model variables
     # Set new column values to covariate value if stratum, else 0
     dat_new <- dat_new %>%
         # Set column values
-        mutate(across(all_of(new_cols), \(x) x = ifelse(as.numeric(str_extract(cur_column(), "(?<=\\.)\\d")) == row_number(), 
+        mutate(across(all_of(new_cols), function(x) x = ifelse(as.numeric(str_extract(cur_column(), "(?<=\\.)\\d")) == row_number(), 
                                                         dat_new[[str_replace(cur_column(), "\\.\\d", "")]], 0))) %>%
         # Add stratum and trans variables
         mutate(strata = 1:6,
