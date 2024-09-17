@@ -1300,7 +1300,7 @@ preds_mst <- function(df, subject, imputation, model_fit = mstate_fit){
     dat_fit <- msfit(model_fit, newdata = dat_new, trans = mat_trans)
     
     # Get individual probabilities for each timepoint
-    probs <- probtrans(dat_fit, predt = 0, method = "aalen", direction = "fixedhorizon", variance = FALSE)[[1]]
+    probs <- probtrans(dat_fit, predt = 1, method = "aalen", direction = "fixedhorizon", variance = FALSE)[[1]]
     
     # Return probs
     return(probs)
