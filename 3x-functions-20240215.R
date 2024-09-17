@@ -1264,7 +1264,7 @@ cstatistic <- function(df, model, observed, predicted, time, cr_validation = TRU
 }
 
 # Create function to calculate multistate predicted risks per individual per imputation
-preds_mst <- function(df, subject, imputation, timepoint, model_fit = mstate_fit){
+preds_mst <- function(df, subject, imputation, model_fit = mstate_fit){
     # Set-up transition matrix
     mat_trans <- transMat(x = list(2:4, 3:4, 4, c()),
                           names = c("Baseline", "Microalbuminuria", "Macroalbuminuria", "Death"))
@@ -1300,7 +1300,7 @@ preds_mst <- function(df, subject, imputation, timepoint, model_fit = mstate_fit
     dat_fit <- msfit(model_fit, newdata = dat_new, trans = mat_trans)
     
     # Get individual probabilities for each timepoint
-    probs <- probtrans(dat_fit, predt = timepoint, method = "aalen", direction = "fixedhorizon", variance = FALSE)[[1]]
+    probs <- probtrans(dat_fit, predt = 0, method = "aalen", direction = "fixedhorizon", variance = FALSE)[[1]]
     
     # Return probs
     return(probs)
@@ -1308,7 +1308,6 @@ preds_mst <- function(df, subject, imputation, timepoint, model_fit = mstate_fit
 
 
                       
-
 
 
 
