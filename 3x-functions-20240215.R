@@ -1625,9 +1625,334 @@ tm <- function(){
                               to = c("Baseline", "Microalbuminuria", "Macroalbuminuria", "Death")))
 }
 
+# Function for C statistic
+cstat <- function(df, subset, time){
+    # Subset cohort
+    dat_tmp <- filter(df, cohort == subset)
+    
+    # Get C-statistic
+    c <- cIndex(dat_tmp[["tte"]], dat_tmp[["event_no_cr"]], dat_tmp[["risk"]])[["index"]]
+    
+    # Calculate confidence interval around C statistic
+    ci <- quantile(do.call("c", map(1:100, function(x){
+        # Set seed
+        set.seed(x)
+        
+        # Get random sample numbers
+        nrs <- sample.int(nrow(dat_tmp), replace = TRUE)
+        
+        # Get samples
+        dat_samp <- dat_tmp[nrs, ] %>%
+            # Change studynr
+            mutate(studynr = 1:nrow(dat_tmp))
+        
+        # Calculate statistic
+        c_bootstrap <- cIndex(dat_samp[["tte_wolb"]], dat_samp[["event"]], dat_samp[["risk"]])[["index"]]
+        
+        # Return statistic
+        return(c_bootstrap)
+    })), 
+    
+    # Get 95% CI
+    probs = c(0.025, 0.975))
+    
+    # Pretty up C statistic
+    c <- paste0(format(round(c, 2), nsmall = 2), " (",
+                format(round(ci[[1]], 2), nsmall = 2), "-",
+                format(round(ci[[2]], 2), nsmall = 2), ")")
+    
+    # Return C statistic
+    return(c)
+}
+
+# Calculating CITL for multistate model
+mstate_citl <- function(x){
+    ## Keep only relevant predictions
+    # Development data
+    dat_prd_int_tmp <- filter(dat_prd_int, time == x) %>%
+        # Change to data frame. A tibble will cause the error:
+        # Error in Ops.data.frame(tp_pred_mlr[, 2:ncol(tp_pred_mlr)], tp_pred_mlr[,  : ‘/’ only defined for equally-sized data frames
+        as.data.frame()
+    
+    # Validation data
+    dat_prd_ext_tmp <- filter(dat_prd_ext, time == x) %>%
+        # Change to data frame. A tibble will cause the error:
+        # Error in Ops.data.frame(tp_pred_mlr[, 2:ncol(tp_pred_mlr)], tp_pred_mlr[,  : ‘/’ only defined for equally-sized data frames
+        as.data.frame()
+    
+    # Multistate data 
+    # We drop individuals based on dat_prd_int, as some individuals had incomprehensible predictions and were dropped
+    # Development data
+    dat_mstate_int_tmp <- filter(dat_mstate, id %in% dat_prd_int_tmp[["id"]]) %>%
+        # Arrange ID
+        arrange(id) 
+    
+    # Validation data
+    dat_mstate_ext_tmp <- filter(dat_mstate, id %in% dat_prd_ext_tmp[["id"]]) %>%
+        # Arrange ID
+        arrange(id) 
+    
+    # Cohort data
+    # We drop individuals based on dat_prd_int, as some individuals had incomprehensible predictions and were dropped
+    # Development data
+    cohort_mstate_int_tmp <- filter(cohort_mstate, id %in% dat_prd_int_tmp[["id"]]) %>%
+        # Arrange ID
+        arrange(id)
+    
+    # Validation data
+    cohort_mstate_ext_tmp <- filter(cohort_mstate, id %in% dat_prd_ext_tmp[["id"]]) %>%
+        # Arrange ID
+        arrange(id)
+    
+    # Calculate linear predictors for internal data
+    dat_lp_int_tmp <- mutate(dat_prd_int_tmp, across(pstate2:pstate4, \(y) log(y / pstate1))) %>%
+        # Change names
+        rename(mlr_lp1 = pstate1, mlr_lp2 = pstate2, mlr_lp3 = pstate3, mlr_lp4 = pstate4) %>%
+        # Keep only relevant variables
+        select(mlr_lp1:mlr_lp4, id) %>%
+        # Set inf to NA
+        mutate(across(mlr_lp1:mlr_lp4, \(y) y = ifelse(is.infinite(y), NA, y)))
+    
+    # Calculate linear predictors for external data
+    dat_lp_ext_tmp <- mutate(dat_prd_ext_tmp, across(pstate2:pstate4, \(y) log(y / pstate1))) %>%
+        # Change names
+        rename(mlr_lp1 = pstate1, mlr_lp2 = pstate2, mlr_lp3 = pstate3, mlr_lp4 = pstate4) %>%
+        # Keep only relevant variables
+        select(mlr_lp1:mlr_lp4, id) %>%
+        # Set inf to NA
+        mutate(across(mlr_lp1:mlr_lp4, \(y) ifelse(is.infinite(y), NA, y)))
+    
+    # Keep only prediction columns for prediction data
+    # Internal
+    dat_prd_int_tmp %<>% select(pstate1:pstate4) %>%
+        # Change names to accord with calibmsm package
+        set_colnames(paste0("tp_pred", 1:4))
+    
+    # External
+    dat_prd_ext_tmp %<>% select(pstate1:pstate4) %>%
+        # Change names to accord with calibmsm package
+        set_colnames(paste0("tp_pred", 1:4))
+    
+    ## General arguments definitions
+    # These are necessary because they are not defined in the calib_mlr_ipcw function. The defaults are taken from the
+    # calib_msm function.
+    j <- 1; s <- 0; t <- x; weights_provided <- FALSE; w_covs <- predictors; w_function <- NULL
+    w_landmark_type <- "state"; w_max <- 10; w_stabilised <- TRUE; w_max_follow <- NULL
+    mlr_ps_int <- 4; mlr_degree <- 3; mlr_s_df <- 4
+    mlr_niknots <- 4; CI <- 95; CI_R_boot <- 100; CI_seed <- 1
+    
+    # Calculate valid transitions internally
+    valid_transitions <- identify_valid_transitions(data_raw = cohort_mstate_int_tmp, 
+                                                    data_ms = dat_mstate_int_tmp, 
+                                                    j = j, s = s, t = t)
+    
+    ### Create a variable to say which state an individual was in at the time of interest
+    # Internal
+    ### Extract which state individuals are in at time t
+    ids_state_list <- vector("list", 4)
+    for (k in valid_transitions){
+        ids_state_list[[k]] <- extract_ids_states(dat_mstate_int_tmp, mat_trans, k, t)
+    }
+    
+    ## Create list containing the relevant data
+    v1 <- cohort_mstate_int_tmp[["id"]]
+    m1 <- outer(v1, ids_state_list, FUN = Vectorize('%in%'))
+    state_poly <- lapply(split(m1, row(m1)), function(x) (1:4)[x])
+    
+    ## Change integer(0) values to NA's
+    idx <- !sapply(state_poly, length)
+    state_poly[idx] <- NA
+    
+    ## Add to data_raw
+    cohort_mstate_int_tmp %<>% mutate(state_poly = unlist(state_poly),
+                                      state_poly_fac = factor(state_poly))
+    
+    ### Create binary variables for each possible state that can be transitioned to
+    ## Start by creating NA data.frame
+    temp_dummy <- data.frame(matrix(NA, ncol = length(valid_transitions), nrow = nrow(cohort_mstate_int_tmp)))
+    
+    ## Create dummy variables
+    temp_dummy_calc <- stats::model.matrix( ~ state_poly_fac - 1, cohort_mstate_int_tmp)
+    
+    ## Assign to temp_dummy, for rows where data_raw is not NA
+    temp_dummy[!is.na(cohort_mstate_int_tmp[["state_poly"]]), ] <- temp_dummy_calc
+    
+    ## Assign colnames
+    colnames(temp_dummy) <- paste("state", valid_transitions, "_bin", sep = "")
+    
+    ### Add to dataset
+    cohort_mstate_int_tmp <- cbind(cohort_mstate_int_tmp, temp_dummy, dat_prd_int_tmp)
+    
+    # Remove temporary data
+    rm(temp_dummy)
+    
+    # External
+    ### Extract which state individuals are in at time t
+    ids_state_list <- vector("list", 4)
+    for (k in valid_transitions){
+        ids_state_list[[k]] <- extract_ids_states(dat_mstate_ext_tmp, mat_trans, k, t)
+    }
+    
+    ## Create list containing the relevant data
+    v1 <- cohort_mstate_ext_tmp[["id"]]
+    m1 <- outer(v1, ids_state_list, FUN = Vectorize('%in%'))
+    state_poly <- lapply(split(m1, row(m1)), function(x) (1:4)[x])
+    
+    ## Change integer(0) values to NA's
+    idx <- !sapply(state_poly, length)
+    state_poly[idx] <- NA
+    
+    ## Add to data_raw
+    cohort_mstate_ext_tmp %<>% mutate(state_poly = unlist(state_poly),
+                                      state_poly_fac = factor(state_poly))
+    
+    ### Create binary variables for each possible state that can be transitioned to
+    ## Start by creating NA data.frame
+    temp_dummy <- data.frame(matrix(NA, ncol = length(valid_transitions), nrow = nrow(cohort_mstate_ext_tmp)))
+    
+    ## Create dummy variables
+    temp_dummy_calc <- stats::model.matrix( ~ state_poly_fac - 1, cohort_mstate_ext_tmp)
+    
+    ## Assign to temp_dummy, for rows where data_raw is not NA
+    temp_dummy[!is.na(cohort_mstate_ext_tmp[["state_poly"]]), ] <- temp_dummy_calc
+    
+    ## Assign colnames
+    colnames(temp_dummy) <- paste("state", valid_transitions, "_bin", sep = "")
+    
+    ### Add to dataset
+    cohort_mstate_ext_tmp <- cbind(cohort_mstate_ext_tmp, temp_dummy, dat_prd_ext_tmp)
+    
+    # Remove temporary data
+    rm(temp_dummy)
+    
+    # Add linear predictors to data_raw
+    # Internal
+    cohort_mstate_int_tmp <- left_join(cohort_mstate_int_tmp, dat_lp_int_tmp, "id")
+    
+    # External
+    cohort_mstate_ext_tmp <- left_join(cohort_mstate_ext_tmp, dat_lp_ext_tmp, "id")
+    
+    # Calculate mean calibration internally
+    mean_calib_int <- calib_mlr_ipcw(data_ms = dat_mstate_int_tmp,
+                                     data_raw = cohort_mstate_int_tmp,
+                                     j = j,                     # From state 1
+                                     s = s,                     # From timepoint 0
+                                     t = t,                     # At timepoint x 
+                                     weights_provided = weights_provided,
+                                     w_covs = w_covs,
+                                     w_function = w_function,
+                                     w_landmark_type = w_landmark_type,
+                                     w_max = w_max,
+                                     w_stabilised = w_stabilised,
+                                     w_max_follow = w_max_follow,
+                                     mlr_smoother_type = "sm.ps",
+                                     mlr_ps_int = mlr_ps_int,
+                                     mlr_degree = mlr_degree,
+                                     mlr_s_df = mlr_s_df,
+                                     mlr_niknots = mlr_niknots,
+                                     CI = CI,
+                                     CI_R_boot = CI_R_boot,
+                                     CI_seed = CI_seed,
+                                     valid_transitions = valid_transitions,
+                                     assess_moderate = FALSE,
+                                     assess_mean = TRUE)
+    
+    # Calculate mean calibration externally
+    mean_calib_ext <- calib_mlr_ipcw(data_ms = dat_mstate_ext_tmp,
+                                     data_raw = cohort_mstate_ext_tmp,
+                                     j = j,                     # From state 1
+                                     s = s,                     # From timepoint 0
+                                     t = t,                     # At timepoint x 
+                                     weights_provided = weights_provided,
+                                     w_covs = w_covs,
+                                     w_function = w_function,
+                                     w_landmark_type = w_landmark_type,
+                                     w_max = w_max,
+                                     w_stabilised = w_stabilised,
+                                     w_max_follow = w_max_follow,
+                                     mlr_smoother_type = "sm.ps",
+                                     mlr_ps_int = mlr_ps_int,
+                                     mlr_degree = mlr_degree,
+                                     mlr_s_df = mlr_s_df,
+                                     mlr_niknots = mlr_niknots,
+                                     CI = CI,
+                                     CI_R_boot = CI_R_boot,
+                                     CI_seed = CI_seed,
+                                     valid_transitions = valid_transitions,
+                                     assess_moderate = FALSE,
+                                     assess_mean = TRUE)
+    
+    # Combine mean calibration into single data frame
+    # Internal
+    dat_calib_mean_int <- do.call("rbind", mean_calib_int[["mean"]]) %>% 
+        # Set to tibble
+        as_tibble() %>%
+        # Add variables
+        mutate(# Predicted state
+            state = rownames(.),
+            # Cohort
+            cohort = "development") 
+    
+    # External
+    dat_calib_mean_ext <- do.call("rbind", mean_calib_ext[["mean"]]) %>% 
+        # Set to tibble
+        as_tibble() %>%
+        # Add variables
+        mutate(# Predicted state
+            state = rownames(.),
+            # Cohort
+            cohort = "validation") 
+    
+    # Combine data
+    dat_calib_mean <- rbind(dat_calib_mean_int,
+                            dat_calib_mean_ext) %>%
+        # Add timepoint indicator
+        mutate(timepoint = x)
+    
+    # Print result
+    cat("\rFinished ", x, "/1095              ", sep = "")
+    
+    # Return data
+    return(dat_calib_mean)
+}
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+# Function for within-individual discrimination
+wi_disc_outcome <- function(individual, outcome, risks, assign_values){
+    # Take risk of corresponding outcome
+    risk <- risks[[outcome]]
+    
+    # Calculate how many risks are higher than the risk of the observed outcome (thus discordant)
+    discordant <- sum(risk > risks[[-outcome]])
+    
+    # Assign value
+    concordance <- assign_values[discordant, 2]
+    
+    # Return concordance
+    return(concordance)
+}
+
+# Upper-level function to cycle through outcomes
+wi_disc <- function(individual, risks, outcome_vars){
+    # Determine number of different outcomes
+    # +1 because censoring is also an 'outcome'
+    n_outcomes <- length(outcomes) + 1
+}
+
+    
+                              
 
 
 
