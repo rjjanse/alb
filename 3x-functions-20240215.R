@@ -1711,7 +1711,7 @@ mstate_citl <- function(x){
         # Keep only relevant variables
         select(mlr_lp1:mlr_lp4, id) %>%
         # Set inf to NA
-        mutate(across(mlr_lp1:mlr_lp4, \(y) y = ifelse(is.infinite(y), NA, y)))
+        mutate(across(mlr_lp1:mlr_lp4, function(y) y = ifelse(is.infinite(y), NA, y)))
     
     # Calculate linear predictors for external data
     dat_lp_ext_tmp <- mutate(dat_prd_ext_tmp, across(pstate2:pstate4, function(y) log(y / pstate1))) %>%
@@ -1720,7 +1720,7 @@ mstate_citl <- function(x){
         # Keep only relevant variables
         select(mlr_lp1:mlr_lp4, id) %>%
         # Set inf to NA
-        mutate(across(mlr_lp1:mlr_lp4, \(y) ifelse(is.infinite(y), NA, y)))
+        mutate(across(mlr_lp1:mlr_lp4, function(y) ifelse(is.infinite(y), NA, y)))
     
     # Keep only prediction columns for prediction data
     # Internal
