@@ -1705,7 +1705,7 @@ mstate_citl <- function(x){
         arrange(id)
     
     # Calculate linear predictors for internal data
-    dat_lp_int_tmp <- mutate(dat_prd_int_tmp, across(pstate2:pstate4, \(y) log(y / pstate1))) %>%
+    dat_lp_int_tmp <- mutate(dat_prd_int_tmp, across(pstate2:pstate4, function(y) log(y / pstate1))) %>%
         # Change names
         rename(mlr_lp1 = pstate1, mlr_lp2 = pstate2, mlr_lp3 = pstate3, mlr_lp4 = pstate4) %>%
         # Keep only relevant variables
@@ -1714,7 +1714,7 @@ mstate_citl <- function(x){
         mutate(across(mlr_lp1:mlr_lp4, \(y) y = ifelse(is.infinite(y), NA, y)))
     
     # Calculate linear predictors for external data
-    dat_lp_ext_tmp <- mutate(dat_prd_ext_tmp, across(pstate2:pstate4, \(y) log(y / pstate1))) %>%
+    dat_lp_ext_tmp <- mutate(dat_prd_ext_tmp, across(pstate2:pstate4, function(y) log(y / pstate1))) %>%
         # Change names
         rename(mlr_lp1 = pstate1, mlr_lp2 = pstate2, mlr_lp3 = pstate3, mlr_lp4 = pstate4) %>%
         # Keep only relevant variables
