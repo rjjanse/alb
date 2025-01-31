@@ -1916,51 +1916,221 @@ mstate_citl <- function(x){
     return(dat_calib_mean)
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Function for within-individual discrimination
-wi_disc_outcome <- function(individual, outcome, risks, assign_values){
-    # Take risk of corresponding outcome
-    risk <- risks[[outcome]]
+# Function to calculate multistate discrimination index
+mdi <- function(df){
+    # Load data
+    dat_tmp <- df
     
-    # Calculate how many risks are higher than the risk of the observed outcome (thus discordant)
-    discordant <- sum(risk > risks[[-outcome]])
+    # Number of states
+    k <- 3
     
-    # Assign value
-    concordance <- assign_values[discordant, 2]
+    # States
+    states <- c("microalbuminuria", "macroalbuminuria", "death")
     
-    # Return concordance
-    return(concordance)
+    # Individuals per state
+    n <- count(dat_tmp, event) %>%
+        # Keep only states of interest
+        filter(event %in% states)
+    
+    # Empty state individuals list
+    state_ind <- list()
+    
+    # Get all individuals per state
+    for(i in states) state_ind[[i]] <- filter(dat_tmp, event == i)[["studynr"]]
+
+    # Create grid
+    grid <- expand.grid(state_ind) %>%
+        # Change to tibble
+        as_tibble() %>%
+        # Change column names to states
+        set_colnames(states) %>%
+        # Add state identifier
+        mutate(set = 1:nrow(.))
+    
+    # For each state, determine state-specific PDI component and take the average to get PDI
+    pdi <- mean(sapply(states, function(x){
+        # Get column where predictions for state are stored
+        col <- case_match(x,
+                          "microalbuminuria" ~ "pstate2",
+                          "macroalbuminuria" ~ "pstate3",
+                          "death" ~ "pstate4")
+        
+        # Keep only identifier and predictions
+        dat_prd_state <- select(dat_tmp, studynr, all_of(col)) %>%
+            # Rename prediction to value for pivoting to wide
+            rename(prd = 2)
+        
+        # Add predictions to data
+        dat_state_tmp <- pivot_longer(grid, all_of(states), names_to = "column", values_to = "studynr") %>%
+            # Join predictions
+            left_join(dat_prd_state, "studynr") %>%
+            # Remove studynr
+            select(-studynr) %>%
+            # Pivot back to wide
+            pivot_wider(names_from = column, values_from = prd) %>%
+            # Remove set number
+            select(-set)
+        
+        # Calculate PDI specific component
+        dat_state_tmp %<>% mutate(# Across columns that are not the outcome we are checking
+                                  across(all_of(colnames(.)[colnames(.) != x]), 
+                                         # Check if prediction for state is larger than other prediction
+                                         function(y) y = case_when(dat_state_tmp[[x]] > y ~ 1,
+                                                                   dat_state_tmp[[x]] == y ~ (1 / k),
+                                                                   .default = 0))) %>%
+            # Remove outcome of interest column
+            select(-all_of(x)) %>%
+            # Take lowest from each row
+            apply(., 1, min) %>%
+            # Sum concordance
+            sum() %>%
+            # Divide by product of all individuals
+            divide_by(prod(sapply(state_ind, length)))
+            
+        # Return concordance
+        return(dat_state_tmp)
+    }))
+    
+    # Undo normalisation factor to get setwise MDI
+    mdi_setwise <- pdi * (norm_set <- k * prod(n[["n"]]))
+    
+    # Get pairwise MDI
+    mdi_pairwise <- sum(sapply(states, function(x){
+        # Get all individuals from event x
+        vec_event_ind <- filter(dat_tmp, event == x)[["studynr"]]
+        
+        # Which prediction is relevant?
+        pred <- case_match(x,
+                           "microalbuminuria" ~ "pstate2",
+                           "macroalbuminuria" ~ "pstate3",
+                           "death" ~ "pstate4")
+        
+        # Subset of individuals with event
+        dat_tmp_sub <- filter(dat_tmp, studynr %in% vec_event_ind)
+        
+        # Make comparisons per individual
+        comps <- sapply(vec_event_ind, function(y){
+            # Get prediction from individual
+            prd_ind <- filter(dat_tmp_sub, studynr == y)[[pred]]
+            
+            # Get time to event from individual
+            tte_ind <- filter(dat_tmp_sub, studynr == y)[["tte"]]
+            
+            # Get prediction from others
+            prd_rst <- filter(dat_tmp_sub, studynr != y)[[pred]]
+            
+            # Get time to event from others
+            tte_rst <- filter(dat_tmp_sub, studynr != y)[["tte"]]
+            
+            # Check concordance
+            conc <- sum(prd_ind > prd_rst & tte_ind < tte_rst) + sum(tte_ind == tte_rst) * 0.5
+            
+            # Return concordance
+            return(conc)
+        })
+        
+        # Take sum of comparisons
+        total_comp <- sum(comps)
+        
+        # Return sum
+        return(total_comp)
+    }))
+    
+    # Add pairwise MDI and setwise MDI together
+    mdi_unnormalised <- mdi_setwise + mdi_pairwise
+    
+    # Normalise MDI
+    mdi <- mdi_unnormalised / (norm_set + sum(n[["n"]] * (n[["n"]] - 1)))
+    
+    # Return MDI
+    return(mdi)
 }
 
-# Upper-level function to cycle through outcomes
-wi_disc <- function(individual, risks, outcome_vars){
-    # Determine number of different outcomes
-    # +1 because censoring is also an 'outcome'
-    n_outcomes <- length(outcomes) + 1
-}
-
+# Function for IDV
+idv <- function(df, timepoint, validation){
+    # Get data at timepoint
+    dat_tmp <- filter(df, time == timepoint, cohort == validation)
     
-                              
+    # Number of states
+    k <- 3
+    
+    # States
+    states <- c("microalbuminuria", "macroalbuminuria", "death")
+    
+    # Empty state individuals list
+    state_ind <- list()
+    
+    # Get all individuals per state
+    for(i in states) state_ind[[i]] <- filter(dat_tmp, event == i)[["studynr"]]
+    
+    # For each state, determine IDV
+    idv <- sapply(states, function(x){
+        # Set column names of data to outcome names
+        
+    })
+    
+}
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    # Calculate category specific component
+    dscs <- sapply(vec_ind, function(x){
+        # Take individual data
+        dat_ind <- filter(dat_tmp, studynr == x)
+        
+        # Get prediction relating to the true outcome for an individual
+        state_true <- dat_ind %>%
+            # Get relevant prediction
+            mutate(prd = case_match(event,
+                                    "microalbuminuria" ~ "pstate2",
+                                    "macroalbuminuria" ~ "pstate3",
+                                    "death" ~ "pstate4")) %>%
+            # Extract state
+            magrittr::extract2("prd")
+        
+        # Take true prediction
+        prd_true <- dat_ind[[state_true]]
+        
+        # Take other predictions
+        prd_rest <- dat_ind[, paste0("pstate", 2:4)[!(state_true == paste0("pstate", 2:4))]]
+        
+        # Calculate discrimination
+        dsc <- sum(prd_true > prd_rest)
+        
+        # Ties (get a value of 1/states)
+        tie <- sum(prd_true == prd_rest) * 1 / k 
+        
+        # Final discrimination
+        dsc <- dsc + tie
+        
+        # Return final discrimination
+        return(dsc)
+    })
 
-
-
-
-
-
-
-
+    # Add to each outcome
+    dat_pdi_comps <- tibble(dsc = dscs,
+                      event = filter(dat_tmp, event != "censored")[["event"]]) %>%
+        # Arrange per event
+        arrange(event) %>%
+        # Group per event 
+        group_by(event) %>%
+        # Get PDI per event
+        summarise(pdi = mean(dsc) / (k - 1)) 
+    
+    # Final PDI
+    pdi <- mean(dat_pdi_comps[["pdi"]])
+    
+    # Undo normalisation factor to get setwise MDI
+    mdi_setwise <- pdi * (norm_set <- k * prod(n[["n"]]))
+    
+  
 
 
 
