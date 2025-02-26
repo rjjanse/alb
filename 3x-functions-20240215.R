@@ -700,7 +700,7 @@ validate <- function(.data,                                     # Validation mea
     else prop_out <- mean(dat[["obs"]])
     
     # Calibration-in-the-large for non-fine-gray
-    if(!cr_validation) citl <- format(round(prop_out / mean(dat[["prd"]]), 3), nsmall = 3)
+    if(!cr_validation) citl <- format(round(prop_out - mean(dat[["prd"]]), 3), nsmall = 3)
     
     # Calibation-in-the-large with cumulative incidence function for competing risks
     else {
@@ -1589,7 +1589,7 @@ survcurv <- function(# Model variables
     data_new <- mutate(data_new, studynr = 1, .imp = 1)
     
     # Calculate linear predictor
-    lp <- pred(data_new, "fine-gray", NULL, lpsamp = 1.406445, mod = mod)[["lp"]]
+    lp <- pred(data_new, "fine-gray", NULL, lpsamp = 1.397665, mod = mod)[["lp"]]
     
     # Time points of interest
     times <- bhs[["time"]]
@@ -1602,13 +1602,13 @@ survcurv <- function(# Model variables
     # Plot data
     plot <- ggplot(dat, aes(x = Month, y = Probability)) +
         # Geometries
-        geom_line(colour = "darkred", linewidth = 1) +
+        geom_line(colour = "#648FFF", linewidth = 1) +
         # Scaling
-        scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.1), labels = paste0(seq(0, 100, 10), "%")) +
+        scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
         scale_x_continuous(limits = c(0, max(dat[["Month"]]) + 1), breaks = seq(0, max(dat[["Month"]] + 1), 3)) +
         # Labels
         xlab("Time (months)") +
-        ylab("Probability of outcome") +
+        ylab("Probability of albuminuria") +
         # Aesthetics
         theme(panel.background = element_blank(),
               panel.grid.major = element_line(colour = "lightgrey"),
@@ -1626,7 +1626,7 @@ tm <- function(){
 }
 
 # Function for C statistic
-cstat <- function(df, subset, time){
+cstat2 <- function(df, subset, time){
     # Subset cohort
     dat_tmp <- filter(df, cohort == subset)
     
@@ -2046,91 +2046,68 @@ mdi <- function(df){
     return(mdi)
 }
 
-# # Function for IDV
-# idv <- function(df, timepoint, validation){
-#     # Get data at timepoint
-#     dat_tmp <- filter(df, time == timepoint, cohort == validation)
-#     
-#     # Number of states
-#     k <- 3
-#     
-#     # States
-#     states <- c("microalbuminuria", "macroalbuminuria", "death")
-#     
-#     # Empty state individuals list
-#     state_ind <- list()
-#     
-#     # Get all individuals per state
-#     for(i in states) state_ind[[i]] <- filter(dat_tmp, event == i)[["studynr"]]
-#     
-#     # For each state, determine IDV
-#     idv <- sapply(states, function(x){
-#         # Set column names of data to outcome names
-#         
-#     })
-#     
-# }
-#     
-#     
+# Function for calibration plot
+p_cal <- function(x, y, event, histogram_label = 0.7){
+    # Create data
+    dat_plot <- tibble(x = x,
+                       y = y,
+                       event = event)
     
+    # Create plot
+    p <- ggplot(dat_plot, aes(x = x, y = y)) +
+        # Geometries
+        geom_abline(colour = "black",
+                    alpha = 0.3) +
+        geom_point(alpha = 0.3) +
+        geom_smooth(colour = "#DC267F",
+                    fill = "#DC267F") +
+        # Scaling
+        scale_x_continuous(name = "Predicted probability",
+                           breaks = seq(0, 1, 0.2)) +
+        scale_y_continuous(name = "Observed probability",
+                           breaks = seq(0, 1, 0.2)) +
+        # Transformations
+        coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+        # Aesthetics
+        theme(plot.background = element_rect(colour = "transparent", fill = "white"),
+              panel.background = element_rect(colour = "transparent", fill = "white"),
+              panel.grid = element_blank(),
+              axis.line = element_line(),)
     
+    # Create events plot
+    p_events <- ggplot(data = dat_plot) +
+        # Geometries
+        geom_histogram(data = filter(dat_plot, event == 1), aes(x = x), binwidth = 0.001, colour = "black", fill = "black") +
+        geom_histogram(data = filter(dat_plot, event == 0), aes(x = x, y = -after_stat(count)), binwidth = 0.001, colour = "black", 
+                       fill = "black") +
+        annotate("text", x = histogram_label, y = max(table(round(dat_plot[["x"]], 3))) / 2, label = "Event", hjust = 0) +
+        annotate("text", x = histogram_label, y = -max(table(round(dat_plot[["x"]], 3))) / 2, label = "No event", hjust = 0) +
+        # Scaling
+        scale_x_continuous(name = "Predicted probability",
+                           breaks = seq(0, 1, 0.2), 
+                           limits = c(0, 1),
+                           sec.axis = sec_axis(~ .,
+                                               breaks = seq(0, 1, 0.2))) +
+        scale_y_continuous(sec.axis = sec_axis(~ .)) +
+        # Transformations
+        coord_cartesian(xlim = c(0, 1), ylim = c(-max(table(round(dat_plot[["x"]], 3))), 
+                                                 max(table(round(dat_plot[["x"]], 3))))) +
+        # Aesthetics
+        theme(panel.background = element_rect(fill = "white"),
+              panel.grid = element_blank(),
+              axis.line = element_line(),
+              axis.ticks.y = element_blank(),
+              axis.text = element_blank(),
+              axis.title = element_blank())
     
+    # Add plots together
+    p_final <- wrap_plots(p, p_events, 
+                          ncol = 1,
+                          heights = c(4, 1))
     
-    
-    # 
-    # 
-    # 
-    # # Calculate category specific component
-    # dscs <- sapply(vec_ind, function(x){
-    #     # Take individual data
-    #     dat_ind <- filter(dat_tmp, studynr == x)
-    #     
-    #     # Get prediction relating to the true outcome for an individual
-    #     state_true <- dat_ind %>%
-    #         # Get relevant prediction
-    #         mutate(prd = case_match(event,
-    #                                 "microalbuminuria" ~ "pstate2",
-    #                                 "macroalbuminuria" ~ "pstate3",
-    #                                 "death" ~ "pstate4")) %>%
-    #         # Extract state
-    #         magrittr::extract2("prd")
-    #     
-    #     # Take true prediction
-    #     prd_true <- dat_ind[[state_true]]
-    #     
-    #     # Take other predictions
-    #     prd_rest <- dat_ind[, paste0("pstate", 2:4)[!(state_true == paste0("pstate", 2:4))]]
-    #     
-    #     # Calculate discrimination
-    #     dsc <- sum(prd_true > prd_rest)
-    #     
-    #     # Ties (get a value of 1/states)
-    #     tie <- sum(prd_true == prd_rest) * 1 / k 
-    #     
-    #     # Final discrimination
-    #     dsc <- dsc + tie
-    #     
-    #     # Return final discrimination
-    #     return(dsc)
-    # })
-    # 
-    # # Add to each outcome
-    # dat_pdi_comps <- tibble(dsc = dscs,
-    #                   event = filter(dat_tmp, event != "censored")[["event"]]) %>%
-    #     # Arrange per event
-    #     arrange(event) %>%
-    #     # Group per event 
-    #     group_by(event) %>%
-    #     # Get PDI per event
-    #     summarise(pdi = mean(dsc) / (k - 1)) 
-    # 
-    # # Final PDI
-    # pdi <- mean(dat_pdi_comps[["pdi"]])
-    # 
-    # # Undo normalisation factor to get setwise MDI
-    # mdi_setwise <- pdi * (norm_set <- k * prod(n[["n"]]))
-    # 
-    # 
+    # Return plot
+    return(p_final)
+}
 
 
 
