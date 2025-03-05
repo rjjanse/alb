@@ -2108,7 +2108,7 @@ mdi <- function(df){
     mdi <- mdi_unnormalised / (norm_set + sum(n[["n"]] * (n[["n"]] - 1)))
     
     # Return MDI and PDI
-    return(list(mdi = mdi, pdi = pdi))
+    return(mdi)
 }
 
 # Function for calibration plot
