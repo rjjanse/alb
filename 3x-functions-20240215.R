@@ -1916,6 +1916,49 @@ mstate_citl <- function(x){
     return(dat_calib_mean)
 }
 
+## Function for PDI from https://doi.org/10.1002/sim.8991 
+#Estimates of PDI and its components
+pdiest<-function(data){
+    
+    y<-data$outcome
+    ymin<-min(y)
+    ymax<-max(y)
+    noutcome<-ymax-ymin
+    p<-prod(table(y))
+    pdi<-c()
+    
+    for (i in 1:(noutcome+1)){
+        
+        predprob<-data[,(i+1)]  #READ predicted probabilities for level i
+        t0<-table(predprob,y)   #CALCULATE frequencies of predicted probabilities for level i by outcome
+        
+        dim1<-dim(t0)[1]
+        dim2<-dim(t0)[2]
+        t<-cbind(t0[,i],t0[,-i]) #REORDER columns
+        restrictt<- if (noutcome == 1){matrix(t[,2:(noutcome+1)],ncol=1)} else {t[,2:(noutcome+1)] } #REMOVE first column of t
+        
+        c<-apply(restrictt,2,cumsum) #CALCULATE cumulative frequencies of predicted probabilities for level i by outcome
+        cnew<- if (noutcome == 1) {rbind(rep(0,noutcome),matrix(c[1:(dim(c)[1]-1),],ncol=))} else {rbind(rep(0,noutcome),c[1:(dim(c)[1]-1),])} #INTRODUCE a row of zeros at the begining of c
+        
+        mat<-c()                     #MATRIX of 0s and 1s of dimension 2^(noutcome) x noutcome
+        for (j in 1:noutcome){
+            mat0<-cbind(mat,0)
+            mat1<-cbind(mat,1)
+            mat<-rbind(mat0,mat1)}
+        
+        r<-0
+        for (k in 1:dim(mat)[1]){
+            dt<-t(apply(restrictt, 1, function(x) mat[k,]*x))
+            dcnew<-t(apply(cnew, 1, function(x) (1-mat[k,])*x))
+            dfinal<-if (noutcome == 1) {cbind(t[,1],t(dt+dcnew))} else {cbind(t[,1],dt+dcnew)} #TAKE all combinations of frequencies and cumulative frequencies
+            r<-r+sum(apply(dfinal,1,prod))/(1+sum(mat[k,]))}                                   #MULTIPLYIES across rows
+        
+        r<-r/p     #PDI component for outcome i
+        pdi<-rbind(pdi,r)
+    }
+    pdi<-rbind(mean(pdi),pdi)
+    pdi}
+
 # Function to calculate multistate discrimination index
 mdi <- function(df){
     # Load data
@@ -1937,59 +1980,81 @@ mdi <- function(df){
     
     # Get all individuals per state
     for(i in states) state_ind[[i]] <- filter(dat_tmp, event == i)[["studynr"]]
-
-    # Create grid
-    grid <- expand.grid(state_ind) %>%
-        # Change to tibble
-        as_tibble() %>%
-        # Change column names to states
-        set_colnames(states) %>%
-        # Add state identifier
-        mutate(set = 1:nrow(.))
     
-    # For each state, determine state-specific PDI component and take the average to get PDI
-    pdi <- mean(sapply(states, function(x){
-        # Get column where predictions for state are stored
-        col <- case_match(x,
-                          "microalbuminuria" ~ "pstate2",
-                          "macroalbuminuria" ~ "pstate3",
-                          "death" ~ "pstate4")
-        
-        # Keep only identifier and predictions
-        dat_prd_state <- select(dat_tmp, studynr, all_of(col)) %>%
-            # Rename prediction to value for pivoting to wide
-            rename(prd = 2)
-        
-        # Add predictions to data
-        dat_state_tmp <- pivot_longer(grid, all_of(states), names_to = "column", values_to = "studynr") %>%
-            # Join predictions
-            left_join(dat_prd_state, "studynr") %>%
-            # Remove studynr
-            select(-studynr) %>%
-            # Pivot back to wide
-            pivot_wider(names_from = column, values_from = prd) %>%
-            # Remove set number
-            select(-set)
-        
-        # Calculate PDI specific component
-        dat_state_tmp %<>% mutate(# Across columns that are not the outcome we are checking
-                                  across(all_of(colnames(.)[colnames(.) != x]), 
-                                         # Check if prediction for state is larger than other prediction
-                                         function(y) y = case_when(dat_state_tmp[[x]] > y ~ 1,
-                                                                   dat_state_tmp[[x]] == y ~ (1 / k),
-                                                                   .default = 0))) %>%
-            # Remove outcome of interest column
-            select(-all_of(x)) %>%
-            # Take lowest from each row
-            apply(., 1, min) %>%
-            # Sum concordance
-            sum() %>%
-            # Divide by product of all individuals
-            divide_by(prod(sapply(state_ind, length)))
-            
-        # Return concordance
-        return(dat_state_tmp)
-    }))
+    ## This was my original code for PDI, but distribution-based is faster
+    # # Create grid
+    # grid <- expand.grid(state_ind) %>%
+    #     # Change to tibble
+    #     as_tibble() %>%
+    #     # Change column names to states
+    #     set_colnames(states) %>%
+    #     # Add state identifier
+    #     mutate(set = 1:nrow(.))
+    # 
+    # # For each state, determine state-specific PDI component and take the average to get PDI
+    # pdi <- mean(sapply(states, function(x){
+    #     # Get column where predictions for state are stored
+    #     col <- case_match(x,
+    #                       "microalbuminuria" ~ "pstate2",
+    #                       "macroalbuminuria" ~ "pstate3",
+    #                       "death" ~ "pstate4")
+    #     
+    #     # Keep only identifier and predictions
+    #     dat_prd_state <- select(dat_tmp, studynr, all_of(col)) %>%
+    #         # Rename prediction to value for pivoting to wide
+    #         rename(prd = 2)
+    #     
+    #     # Add predictions to data
+    #     dat_state_tmp <- pivot_longer(grid, all_of(states), names_to = "column", values_to = "studynr") %>%
+    #         # Join predictions
+    #         left_join(dat_prd_state, "studynr") %>%
+    #         # Remove studynr
+    #         select(-studynr) %>%
+    #         # Pivot back to wide
+    #         pivot_wider(names_from = column, values_from = prd) %>%
+    #         # Remove set number
+    #         select(-set)
+    #     
+    #     # Calculate PDI specific component
+    #     dat_state_tmp %<>% mutate(# Across columns that are not the outcome we are checking
+    #                               across(all_of(colnames(.)[colnames(.) != x]), 
+    #                                      # Check if prediction for state is larger than other prediction
+    #                                      function(y) y = case_when(dat_state_tmp[[x]] > y ~ 1,
+    #                                                                dat_state_tmp[[x]] == y ~ (1 / k),
+    #                                                                .default = 0))) %>%
+    #         # Remove outcome of interest column
+    #         select(-all_of(x)) %>%
+    #         # Take lowest from each row
+    #         apply(., 1, min) %>%
+    #         # Sum concordance
+    #         sum() %>%
+    #         # Divide by product of all individuals
+    #         divide_by(prod(sapply(state_ind, length)))
+    #         
+    #     # Return concordance
+    #     return(dat_state_tmp)
+    # }))
+    
+    # Change data for PDI calculation
+    dat_pdi <- dat_tmp %>%
+        # Change outcome to integer
+        mutate(outcome = case_match(event, 
+                                    "microalbuminuria" ~ 1,
+                                    "macroalbuminuria" ~ 2,
+                                    "death" ~ 3)) %>%
+        # Rename prediction columns
+        rename(p1 = pstate2,   # Here, p1 corresponds to outcome 1 which is microalbuminuria and therefore pstate2
+               p2 = pstate3,
+               p3 = pstate4) %>%
+        # Keep only relevant columns
+        select(outcome, p1:p3) %>%
+        # Keep only predictions for outcomes (not censored)
+        filter(!is.na(outcome)) %>%
+        # Explicitly set to data frame for pdiest function
+        as.data.frame()
+    
+    # Calculate PDI
+    pdi <- pdiest(dat_pdi)[[1]]
     
     # Undo normalisation factor to get setwise MDI
     mdi_setwise <- pdi * (norm_set <- k * prod(n[["n"]]))
@@ -2042,12 +2107,12 @@ mdi <- function(df){
     # Normalise MDI
     mdi <- mdi_unnormalised / (norm_set + sum(n[["n"]] * (n[["n"]] - 1)))
     
-    # Return MDI
-    return(mdi)
+    # Return MDI and PDI
+    return(list(mdi = mdi, pdi = pdi))
 }
 
 # Function for calibration plot
-p_cal <- function(x, y, event, histogram_label = 0.7){
+p_cal <- function(x, y, event, histogram_label = 0.7, title = NULL){
     # Create data
     dat_plot <- tibble(x = x,
                        y = y,
@@ -2072,7 +2137,16 @@ p_cal <- function(x, y, event, histogram_label = 0.7){
         theme(plot.background = element_rect(colour = "transparent", fill = "white"),
               panel.background = element_rect(colour = "transparent", fill = "white"),
               panel.grid = element_blank(),
-              axis.line = element_line(),)
+              axis.line = element_line())
+    
+    # Add title if requested
+    if(!is.null(title)){
+        p <- p + 
+            # Labels
+            ggtitle(title) + 
+            # Aesthetics
+            theme(plot.title = element_text(face = "bold", hjust = 0.5))
+    }
     
     # Create events plot
     p_events <- ggplot(data = dat_plot) +
@@ -2108,11 +2182,6 @@ p_cal <- function(x, y, event, histogram_label = 0.7){
     # Return plot
     return(p_final)
 }
-
-
-
-
-
 
 
 # Data preparation for multi state prediction
