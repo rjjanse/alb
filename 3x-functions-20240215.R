@@ -2111,6 +2111,10 @@ mdi <- function(df){
     return(mdi)
 }
 
+# Rescaling function
+rescale <- function(value, xmin = 1/3, xmax = 1, ymin = 0.5, ymax = 1) return(ymin + (ymax - ymin) / (xmax - xmin) * (value - xmin))
+
+
 # Function for calibration plot
 p_cal <- function(x, y, event, histogram_label = 0.7, title = NULL){
     # Create data
