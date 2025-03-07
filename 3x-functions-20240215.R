@@ -2055,10 +2055,10 @@ mdi <- function(df){
     
     # Calculate PDI
     pdi <- pdiest(dat_pdi)[[1]]
-    
+
     # Undo normalisation factor to get setwise MDI
     mdi_setwise <- pdi * (norm_set <- k * prod(n[["n"]]))
-    
+
     # Get pairwise MDI
     mdi_pairwise <- sum(sapply(states, function(x){
         # Get all individuals from event x
