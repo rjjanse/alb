@@ -1602,13 +1602,13 @@ survcurv <- function(# Model variables
     # Plot data
     plot <- ggplot(dat, aes(x = Month, y = Probability)) +
         # Geometries
-        geom_line(colour = "#648FFF", linewidth = 1) +
+        geom_line(colour = "#DC267F", linewidth = 1) +
         # Scaling
         scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
         scale_x_continuous(limits = c(0, max(dat[["Month"]]) + 1), breaks = seq(0, max(dat[["Month"]] + 1), 3)) +
         # Labels
         xlab("Time (months)") +
-        ylab("Probability of albuminuria") +
+        ylab("Probability") +
         # Aesthetics
         theme(panel.background = element_blank(),
               panel.grid.major = element_line(colour = "lightgrey"),
@@ -2324,7 +2324,7 @@ plot_mstate_prep <- function(# Model variables
         scale_colour_manual(values = c("#785EF0", "#FE6100", "#DC267F", "#FFB000")) +
         scale_fill_manual(values = c("#785EF0", "#FE6100", "#DC267F", "#FFB000")) +
         scale_x_continuous(breaks = seq(0, 36, 3), name = "Time (months)", expand = c(0, 0)) +
-        scale_y_continuous(breaks = seq(0, 100, 10), labels = paste0(seq(0, 100, 10), "%"),
+        scale_y_continuous(breaks = seq(0, 100, 20), labels = paste0(seq(0, 100, 20), "%"),
                            name = "Probability", expand = c(0, 0)) +
         # Transformations
         coord_cartesian(xlim = c(0, 36), ylim = c(0, 100)) +
