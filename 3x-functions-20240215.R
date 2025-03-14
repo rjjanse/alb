@@ -2321,8 +2321,8 @@ plot_mstate_prep <- function(# Model variables
     # Finish plot
     plot <- plot +
         # Scalings
-        scale_colour_manual(values = c("#BC4749", "#1D3354", "#467599", "#F2E8CF")) +
-        scale_fill_manual(values = c("#BC4749", "#1D3354", "#467599", "#F2E8CF")) +
+        scale_colour_manual(values = c("#FFB000", "#FE6100", "#DC267F", "#785EF0")) +
+        scale_fill_manual(values = c("#FFB000", "#FE6100", "#DC267F", "#785EF0")) +
         scale_x_continuous(breaks = seq(0, 36, 3), name = "Time (months)", expand = c(0, 0)) +
         scale_y_continuous(breaks = seq(0, 100, 10), labels = paste0(seq(0, 100, 10), "%"),
                            name = "Probability", expand = c(0, 0)) +
@@ -2339,4 +2339,3 @@ plot_mstate_prep <- function(# Model variables
     # If interactive, return interactive plot, else just plot
     if(interactive) return(ggplotly(plot, tooltip = c("fill"))) else return(plot)
 }
-    
