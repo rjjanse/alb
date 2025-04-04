@@ -2053,6 +2053,23 @@ mdi <- function(df){
         # Explicitly set to data frame for pdiest function
         as.data.frame()
     
+    # Change data for PDI calculation, adapted to only assess discrimination between albuminuria and death
+    dat_pdi <- dat_tmp %>%
+        # Change outcome to integer
+        mutate(outcome = case_match(event, 
+                                    "microalbuminuria" ~ 1,
+                                    "macroalbuminuria" ~ 1,
+                                    "death" ~ 2)) %>%
+        # Rename prediction columns
+        mutate(p1 = pstate2 + pstate3,   # Here, p1 corresponds to outcome 1 which is microalbuminuria and therefore pstate2
+               p2 = pstate4) %>%
+        # Keep only relevant columns
+        select(outcome, p1:p2) %>%
+        # Keep only predictions for outcomes (not censored)
+        filter(!is.na(outcome)) %>%
+        # Explicitly set to data frame for pdiest function
+        as.data.frame()
+    
     # Calculate PDI
     pdi <- pdiest(dat_pdi)[[1]]
 
@@ -2188,6 +2205,101 @@ p_cal <- function(x, y, event, histogram_label = 0.7, title = NULL){
 }
 
 
+# Calibation plot for time to event
+p_cal_eft <- function(x, y, event){
+    # Create data
+    dat_plot <- tibble(x = x,
+                       y = y,
+                       event = factor(event, labels = c("No albuminuria", "Albuminuria")))
+    
+    # Create plot
+    p <- ggplot(dat_plot, aes(x = x, y = y, colour = event)) +
+        # Geometries
+        geom_abline(alpha = 0.3) +
+        geom_point(alpha = 0.3) +
+        geom_smooth(colour = "#648FFF",
+                    fill = "#648FFF") +
+        # Scaling
+        scale_x_continuous(name = "Predicted event-free time (days)",
+                           breaks = seq(0, max(x, y), 5000),
+                           expand = expansion(add = c(500, 0))) +
+        scale_y_continuous(name = "Observed event-free time (days)",
+                           breaks = seq(0, max(x, y), 5000),
+                           expand = expansion(add = c(500, 0))) +
+        scale_colour_manual(values = c("#785EF0", "#DC267F")) +
+        # Transformations
+        coord_cartesian(xlim = c(0, max(x, y) + 100), 
+                        ylim = c(0, max(x, y) + 100)) +
+        # Aesthetics
+        theme(plot.background = element_rect(colour = "transparent", fill = "white"),
+              panel.background = element_rect(colour = "transparent", fill = "white"),
+              panel.grid = element_blank(),
+              axis.line = element_line())
+    
+    # Create zoomed plot
+    p_zoom <- ggplot(dat_plot, aes(x = x, y = y, colour = event)) +
+        # Geometries
+        geom_abline(alpha = 0.3) +
+        geom_point(alpha = 0.3) +
+        geom_smooth(colour = "#648FFF",
+                    fill = "#648FFF") +
+        # Scaling
+        scale_x_continuous(breaks = seq(0, 1096, 182.5)) +
+        scale_y_continuous(breaks = seq(0, 1096, 182.5)) +
+        scale_colour_manual(values = c("#785EF0", "#DC267F")) +
+        # Transformations
+        coord_cartesian(xlim = c(0, 1096), 
+                        ylim = c(0, 1096)) +
+        # Aesthetics
+        theme(plot.background = element_rect(colour = "transparent", fill = "transparent"),
+              panel.background = element_rect(colour = "black", fill = "white"),
+              plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+              panel.grid = element_blank(),
+              axis.line = element_line(),
+              axis.text.x = element_text(angle = 45,
+                                         vjust = 0.5),
+              axis.title = element_blank(),
+              legend.position = "none")
+    
+    # Add zoom plot to main plot
+    p <- p + annotation_custom(ggplotGrob(p_zoom), xmin = 500, xmax = 0.5 * max(x, y) , ymin = 0.5 * max(x, y), ymax = max(x, y))
+  
+    # Create events plot
+    p_events <- ggplot(data = dat_plot) +
+        # Geometries
+        geom_histogram(data = filter(dat_plot, event == "Albuminuria"), aes(x = x), binwidth = 10, colour = "black", fill = "black") +
+        geom_histogram(data = filter(dat_plot, event == "No albuminuria"), aes(x = x, y = -after_stat(count)), binwidth = 10, colour = "black", 
+                       fill = "black") +
+        annotate("text", x = 0.75 * max(x, y), y = max(table(round(dat_plot[["x"]], -1))) / 2, label = "Event", hjust = 0) +
+        annotate("text", x = 0.75 * max(x, y), y = -max(table(round(dat_plot[["x"]], -1))) / 2, label = "No event", hjust = 0) +
+        # Scaling
+        scale_x_continuous(name = "Predicted probability",
+                           limits = c(0, max(x, y) + 100),
+                           breaks = seq(0, max(x, y), 5000), 
+                           sec.axis = sec_axis(~ .,
+                                               breaks = seq(0, max(x, y), 5000))) +
+        scale_y_continuous(sec.axis = sec_axis(~ .)) +
+        # Transformations
+        coord_cartesian(xlim = c(0, max(x, y) + 100), 
+                        ylim = c(-max(table(round(dat_plot[["x"]], -1))), 
+                                 max(table(round(dat_plot[["x"]], -1))))) +
+        # Aesthetics
+        theme(panel.background = element_rect(fill = "white"),
+              panel.grid = element_blank(),
+              axis.line = element_line(),
+              axis.ticks.y = element_blank(),
+              axis.text = element_blank(),
+              axis.title = element_blank())
+    
+    # Add plots together
+    p_final <- wrap_plots(p, p_events, 
+                          ncol = 1,
+                          heights = c(4, 1))
+    
+    # Return plot
+    return(p_final)
+}
+
 # Data preparation for multi state prediction
 plot_mstate_prep <- function(# Model variables
                              female,
@@ -2306,23 +2418,25 @@ plot_mstate_prep <- function(# Model variables
                                   "pstate3" ~ "Macroalbuminuria",
                                   "pstate4" ~ "Death"),
                # State as factor
-               state = factor(state, levels = c("Death", "Macroalbuminuria", "Microalbuminuria", "Event-free")),
+               state = factor(state, levels = c("Event-free", "Microalbuminuria", "Macroalbuminuria", "Death")),
                # Time to months
                month = time / (365.25 / 12),
                # Probability
-               Probability = value * 100)
+               Probability = value * 100) %>%
+        # Remove probabilities for event-free
+        filter(state != "Event-free")
     
     # Create base plot
     plot <- ggplot(dat_plot, aes(x = month, y = Probability, fill = state, colour = state))
     
     # If area, add area, else add line
-    if(area) plot <- plot + geom_area() else plot <- plot + geom_line()
+    if(area) plot <- plot + geom_area(colour = NA) else plot <- plot + geom_line()
     
     # Finish plot
     plot <- plot +
         # Scalings
-        scale_colour_manual(values = c("#785EF0", "#FE6100", "#DC267F", "#FFB000")) +
-        scale_fill_manual(values = c("#785EF0", "#FE6100", "#DC267F", "#FFB000")) +
+        scale_colour_manual(values = c("#DC267F7F", "#FE61007F", "#FFB0007F")) +
+        scale_fill_manual(values = c("#DC267F7F", "#FE61007F", "#FFB0007F")) +
         scale_x_continuous(breaks = seq(0, 36, 3), name = "Time (months)", expand = c(0, 0)) +
         scale_y_continuous(breaks = seq(0, 100, 20), labels = paste0(seq(0, 100, 20), "%"),
                            name = "Probability", expand = c(0, 0)) +
@@ -2335,6 +2449,9 @@ plot_mstate_prep <- function(# Model variables
               panel.background = element_rect(fill = "white"),
               panel.grid.major = element_line(colour = "darkgrey"),
               panel.grid.minor = element_blank())
+    
+    # If area, remove grid
+    if(area) plot <- plot + theme(panel.grid.major = element_blank())
     
     # If interactive, return interactive plot, else just plot
     if(interactive) return(ggplotly(plot, tooltip = c("fill"))) else return(plot)
