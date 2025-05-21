@@ -2414,11 +2414,11 @@ plot_mstate_prep <- function(# Model variables
         mutate(# Change state names
                state = case_match(name,
                                   "pstate1" ~ "Event-free",
-                                  "pstate2" ~ "Microalbuminuria",
-                                  "pstate3" ~ "Macroalbuminuria",
+                                  "pstate2" ~ "Albuminuria stage A2",
+                                  "pstate3" ~ "Albuminuria stage A3",
                                   "pstate4" ~ "Death"),
                # State as factor
-               state = factor(state, levels = c("Event-free", "Microalbuminuria", "Macroalbuminuria", "Death")),
+               state = factor(state, levels = c("Event-free", "Albuminuria stage A2", "Albuminuria stage A3", "Death")),
                # Time to months
                month = time / (365.25 / 12),
                # Probability
